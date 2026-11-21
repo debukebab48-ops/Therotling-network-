@@ -79,6 +79,8 @@ fun ThrottlerScreen() {
     var isGlobalMode by remember { mutableStateOf(true) }
     var selectedAppPkg by remember { mutableStateOf<String?>(null) }
     var selectedAppName by remember { mutableStateOf("Global Mode") }
+    var isHotspotMode by remember { mutableStateOf(false) }
+    var hotspotIp by remember { mutableStateOf("") }
 
     var showModeMenu by remember { mutableStateOf(false) }
     var showAppPicker by remember { mutableStateOf(false) }
@@ -87,32 +89,38 @@ fun ThrottlerScreen() {
         ActivityResultContracts.RequestPermission()
     ) { _ -> }
 
-    LaunchedEffect(Unit) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            val granted = ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.POST_NOTIFICATIONS
-            ) == PackageManager.PERMISSION_GRANTED
-            if (!granted) {
-                notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }
-        }
-    }
-
-    fun sendStartService(profile: ThrottleProfile) {
-        val intent = Intent(context, ThrottleVpnService::class.java).apply {
-            action = ThrottleVpnService.ACTION_START
-            putExtra(ThrottleVpnService.EXTRA_PROFILE_NAME, profile.name)
-            putExtra(ThrottleVpnService.EXTRA_PROFILE_SUB, profile.subtitle)
-            putExtra(ThrottleVpnService.EXTRA_DOWN_BPS, profile.downloadBps)
-            putExtra(ThrottleVpnService.EXTRA_UP_BPS, profile.uploadBps)
-            putExtra(ThrottleVpnService.EXTRA_LATENCY_MS, profile.latencyMs)
-            if (!isGlobalMode && !selectedAppPkg.isNullOrBlank()) {
+            putExtra(ThrottleVpnService.EXTRA_HOTSPOT_MODE, isHotspotMode)
+            if (isHotspotMode) {
+                hotspotIp = ThrottleVpnService().getLocalHotspotIp()
+            } else if (!isGlobalMode && !selectedAppPkg.isNullOrBlank()) {
                 putExtra(ThrottleVpnService.EXTRA_TARGET_PKG, selectedAppPkg)
             }
         }
         context.startForegroundService(intent)
         isRunning = true
+    }
+
+    val vpnLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            sendStartService(selectedProfile)
+        }
+    }
+
+    fun startOrRestartVpn(profile: ThrottleProfile = selectedProfile) {
+        if (isHotspotMode) {
+            sendStartService(profile)
+            return
+        }
+        val prepareIntent = VpnService.prepare(context)
+        if (prepareIntent != null) {
+            vpnLauncher.launch(prepareIntent)
+        } else {
+            sendStartService(profile)
+        }
+    }
+
     }
 
     val vpnLauncher = rememberLauncherForActivityResult(
@@ -184,16 +192,10 @@ fun ThrottlerScreen() {
                                 )
                             }
 
-                            DropdownMenu(
-                                expanded = showModeMenu,
-                                onDismissRequest = { showModeMenu = false },
-                                modifier = Modifier
-                                    .background(ClassicSurface)
-                                    .border(1.dp, ClassicBorder)
-                            ) {
-                                DropdownMenuItem(
+                                                            DropdownMenuItem(
                                     text = { Text("Global Mode (Semua App)", color = ClassicTextPrimary) },
                                     onClick = {
+                                        isHotspotMode = false
                                         isGlobalMode = true
                                         selectedAppPkg = null
                                         showModeMenu = false
@@ -206,6 +208,19 @@ fun ThrottlerScreen() {
                                     onClick = {
                                         showModeMenu = false
                                         showAppPicker = true
+                                    }
+                                )
+                                HorizontalDivider(color = ClassicBorder)
+                                DropdownMenuItem(
+                                    text = { Text("Hotspot Proxy (IP:8080)", color = ClassicAccent) },
+                                    onClick = {
+                                        isHotspotMode = true
+                                        isGlobalMode = false
+                                        selectedAppPkg = null
+                                        selectedAppName = "Hotspot Proxy"
+                                        hotspotIp = ThrottleVpnService().getLocalHotspotIp()
+                                        showModeMenu = false
+                                        if (isRunning) startOrRestartVpn()
                                     }
                                 )
                             }
@@ -245,6 +260,17 @@ fun ThrottlerScreen() {
                         fontSize = 11.sp,
                         fontFamily = FontFamily.Monospace,
                         color = ClassicTextSecondary
+                                        if (isHotspotMode) {
+                    val ipDisplay = if (hotspotIp.isBlank()) ThrottleVpnService().getLocalHotspotIp() else hotspotIp
+                    Text(
+                        text = "Proxy Klien Wi-Fi: $ipDisplay:${ThrottleVpnService.PROXY_PORT}",
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = ClassicAccent,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(ClassicSurfaceActive)
+                            .padding(horizontal = 16.dp, vertical = 6.dp)
                     )
                 }
             }
