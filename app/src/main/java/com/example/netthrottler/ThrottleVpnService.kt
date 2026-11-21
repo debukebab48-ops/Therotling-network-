@@ -35,7 +35,15 @@ import kotlin.random.Random
 class ThrottleVpnService : VpnService() {
 
     private var vpnInterface: ParcelFileDescriptor? = null
-    private val globalExecutor = Executors.newCachedThreadPool()
+    @Volatile
+    private var globalExecutor: ExecutorService = Executors.newCachedThreadPool()
+
+    @Synchronized
+    private fun ensureExecutor() {
+        if (globalExecutor.isShutdown || globalExecutor.isTerminated) {
+            globalExecutor = Executors.newCachedThreadPool()
+        }
+    }
     private val tcpSessions = ConcurrentHashMap<String, TcpSession>()
     private val udpSessions = ConcurrentHashMap<String, UdpSession>()
 
@@ -190,10 +198,20 @@ class ThrottleVpnService : VpnService() {
                 val hotspotMode = intent.getBooleanExtra(EXTRA_HOTSPOT_MODE, false)
                 val targetPkg = intent.getStringExtra(EXTRA_TARGET_PKG)
 
-                if (hotspotMode) {
-                    startHotspotProxy(name, sub, downBps, upBps, latencyMs)
-                } else {
-                    startVpn(name, sub, downBps, upBps, latencyMs, targetPkg)
+                try {
+                    ensureExecutor()
+                    if (hotspotMode) {
+                        startHotspotProxy(name, sub, downBps, upBps, latencyMs)
+                    } else {
+                        startVpn(name, sub, downBps, upBps, latencyMs, targetPkg)
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    // Jangan crash: service tetap jalan sebagai foreground dengan notif error, biar user bisa STOP
+                    try {
+                        createNotificationChannel()
+                        startForeground(NOTIF_ID, buildNotification(name, "Gagal start: " + (e.message ?: "unknown"), false))
+                    } catch (_: Exception) {}
                 }
                 return START_STICKY
             }
@@ -634,12 +652,35 @@ class ThrottleVpnService : VpnService() {
                 }
                 proxyServerSocket = server
                 while (isRunning && isHotspotProxyActive) {
-                    val clientSock = server.accept()
-                    globalExecutor.execute {
-                        handleProxyClient(clientSock, upBucket, downBucket, latencyMs)
+                    try {
+                        val clientSock = server.accept()
+                        try {
+                            clientSock.soTimeout = 30_000
+                            clientSock.tcpNoDelay = true
+                        } catch (_: Exception) {}
+                        try {
+                            ensureExecutor()
+                            globalExecutor.execute {
+                                // Satu klien error TIDAK BOLEH bunuh service
+                                try {
+                                    handleProxyClient(clientSock, upBucket, downBucket, latencyMs)
+                                } catch (t: Throwable) {
+                                    try { clientSock.close() } catch (_: Exception) {}
+                                }
+                            }
+                        } catch (t: Throwable) {
+                            // RejectedExecutionException dll -> tutup socket klien ini saja
+                            try { clientSock.close() } catch (_: Exception) {}
+                        }
+                    } catch (e: java.net.SocketException) {
+                        // ServerSocket ditutup dari stopHotspotProxyInternal -> keluar loop dengan tenang
+                        if (!isRunning || !isHotspotProxyActive) break
+                    } catch (_: Exception) {
+                        if (!isRunning || !isHotspotProxyActive) break
                     }
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
         }
 
@@ -686,61 +727,176 @@ class ThrottleVpnService : VpnService() {
         downBucket: TokenBucket,
         latencyMs: Long
     ) {
-        client.use { cSock ->
-            val input = BufferedInputStream(cSock.getInputStream())
-            val out = cSock.getOutputStream()
+        // FIX UTAMA crash 4 detik random:
+        // Dulu: remote.connect() ada di try-finally TANPA catch.
+        // Kalau DNS gagal / timeout / refused / klien putus duluan, IOException naik ke
+        // Executor thread -> uncaught -> Android bunuh proses -> "NetThrottler telah berhenti".
+        // Sekarang: SEMUA exception ditangkap per-koneksi, klien itu saja yang gagal, service tetap hidup.
+        try {
+            client.use { cSock ->
+                val input: InputStream
+                val out: OutputStream
+                try {
+                    input = BufferedInputStream(cSock.getInputStream())
+                    out = cSock.getOutputStream()
+                } catch (_: Exception) {
+                    return
+                }
 
-            val firstLine = readAsciiLine(input) ?: return
-            val headers = mutableListOf<String>()
-            while (true) {
-                val line = readAsciiLine(input) ?: return
-                if (line.isEmpty()) break
-                if (!line.startsWith("Proxy-", ignoreCase = true)) {
-                    headers.add(line)
+                val firstLine = try {
+                    readAsciiLine(input)
+                } catch (_: Exception) {
+                    return
+                } ?: return
+
+                // Tolak request aneh / kosong tanpa crash
+                if (firstLine.isBlank()) return
+                val headers = mutableListOf<String>()
+                try {
+                    while (true) {
+                        val line = readAsciiLine(input) ?: return
+                        if (line.isEmpty()) break
+                        if (line.length > 8192) return
+                        if (!line.startsWith("Proxy-", ignoreCase = true)) {
+                            headers.add(line)
+                        }
+                    }
+                } catch (_: Exception) {
+                    return
+                }
+
+                val parts = firstLine.split(" ")
+                if (parts.size < 2) return
+                val method = parts[0].uppercase(Locale.US)
+                val target = parts[1]
+                if (target.isBlank() || target == "*") {
+                    // OPTIONS * / probe captive-portal tanpa target -> jawab OK saja
+                    try {
+                        out.write("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".toByteArray())
+                        out.flush()
+                    } catch (_: Exception) {}
+                    return
+                }
+
+                if (method == "CONNECT") {
+                    // FIX IPv6: dulu target.split(":") hancur untuk [IPv6]:port
+                    // Pakai lastIndexOf(':') biar [2606:4700::...]:443 kepotong benar
+                    val host: String
+                    val port: Int
+                    try {
+                        val clean = target.removeSurrounding("[", "]")
+                        // Cari host:port dengan cara aman untuk IPv6
+                        if (target.startsWith("[")) {
+                            val closeIdx = target.indexOf(']')
+                            if (closeIdx == -1) return
+                            host = target.substring(1, closeIdx)
+                            val rest = target.substring(closeIdx + 1)
+                            port = if (rest.startsWith(":")) rest.substring(1).toIntOrNull() ?: 443 else 443
+                        } else {
+                            val lastColon = target.lastIndexOf(':')
+                            if (lastColon > 0 && lastColon < target.length - 1) {
+                                host = target.substring(0, lastColon)
+                                port = target.substring(lastColon + 1).toIntOrNull() ?: 443
+                            } else {
+                                host = target
+                                port = 443
+                            }
+                        }
+                        if (host.isBlank()) return
+                    } catch (_: Exception) {
+                        return
+                    }
+
+                    val remote = Socket()
+                    try {
+                        try { protect(remote) } catch (_: Exception) {}
+                        try { remote.soTimeout = 30_000 } catch (_: Exception) {}
+                        try { remote.tcpNoDelay = true } catch (_: Exception) {}
+                        remote.connect(InetSocketAddress(host, port), 10_000)
+                        if (latencyMs > 0) Thread.sleep(latencyMs)
+                        try {
+                            out.write("HTTP/1.1 200 Connection Established\r\n\r\n".toByteArray())
+                            out.flush()
+                        } catch (_: Exception) {
+                            return
+                        }
+                        relayBidirectional(input, out, remote, upBucket, downBucket, latencyMs)
+                    } catch (e: Exception) {
+                        // Gagal connect ke tujuan (DNS / timeout / refused) -> kirim 502 ke klien ini saja
+                        try {
+                            out.write("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n".toByteArray())
+                            out.flush()
+                        } catch (_: Exception) {}
+                    } finally {
+                        try { remote.close() } catch (_: Exception) {}
+                    }
+                } else {
+                    val uri: URI
+                    try {
+                        uri = URI(target)
+                    } catch (_: Exception) {
+                        try {
+                            out.write("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n".toByteArray())
+                            out.flush()
+                        } catch (_: Exception) {}
+                        return
+                    }
+                    // Klien kadang kirim origin-form "/path" bukan absolute URI -> host dari header Host
+                    val host: String
+                    val port: Int
+                    val path: String
+                    try {
+                        if (uri.host != null) {
+                            host = uri.host
+                            port = if (uri.port != -1) uri.port else 80
+                            path = (uri.rawPath?.ifEmpty { "/" } ?: "/") + (uri.rawQuery?.let { "?$it" } ?: "")
+                        } else {
+                            // Cari Host header
+                            val hostHeader = headers.firstOrNull { it.startsWith("Host:", ignoreCase = true) }
+                                ?.substringAfter(":", "")?.trim() ?: return
+                            val hParts = hostHeader.split(":")
+                            host = hParts[0]
+                            port = hParts.getOrNull(1)?.toIntOrNull() ?: 80
+                            path = target.ifEmpty { "/" }
+                        }
+                        if (host.isBlank()) return
+                    } catch (_: Exception) {
+                        return
+                    }
+                    val remote = Socket()
+                    try {
+                        try { protect(remote) } catch (_: Exception) {}
+                        try { remote.soTimeout = 30_000 } catch (_: Exception) {}
+                        try { remote.tcpNoDelay = true } catch (_: Exception) {}
+                        remote.connect(InetSocketAddress(host, port), 10_000)
+                        if (latencyMs > 0) Thread.sleep(latencyMs)
+                        val sb = StringBuilder("$method $path HTTP/1.1\r\n")
+                        headers.forEach { sb.append(it).append("\r\n") }
+                        sb.append("\r\n")
+                        val reqBytes = sb.toString().toByteArray()
+                        try {
+                            upBucket.consume(reqBytes.size)
+                            upBytesCounter.addAndGet(reqBytes.size.toLong())
+                            remote.getOutputStream().write(reqBytes)
+                            remote.getOutputStream().flush()
+                        } catch (_: Exception) {
+                            return
+                        }
+                        relayBidirectional(input, out, remote, upBucket, downBucket, latencyMs)
+                    } catch (_: Exception) {
+                        try {
+                            out.write("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n".toByteArray())
+                            out.flush()
+                        } catch (_: Exception) {}
+                    } finally {
+                        try { remote.close() } catch (_: Exception) {}
+                    }
                 }
             }
-
-            val parts = firstLine.split(" ")
-            if (parts.size < 2) return
-            val method = parts[0].uppercase(Locale.US)
-            val target = parts[1]
-
-            if (method == "CONNECT") {
-                val hostPort = target.split(":")
-                val host = hostPort[0]
-                val port = hostPort.getOrNull(1)?.toIntOrNull() ?: 443
-                val remote = Socket()
-                try {
-                    remote.connect(InetSocketAddress(host, port), 10000)
-                    if (latencyMs > 0) Thread.sleep(latencyMs)
-                    out.write("HTTP/1.1 200 Connection Established\r\n\r\n".toByteArray())
-                    out.flush()
-                    relayBidirectional(input, out, remote, upBucket, downBucket, latencyMs)
-                } finally {
-                    try { remote.close() } catch (_: Exception) {}
-                }
-            } else {
-                val uri = URI(target)
-                val host = uri.host ?: return
-                val port = if (uri.port != -1) uri.port else 80
-                val path = (uri.rawPath?.ifEmpty { "/" } ?: "/") + (uri.rawQuery?.let { "?$it" } ?: "")
-                val remote = Socket()
-                try {
-                    remote.connect(InetSocketAddress(host, port), 10000)
-                    if (latencyMs > 0) Thread.sleep(latencyMs)
-                    val sb = StringBuilder("$method $path HTTP/1.1\r\n")
-                    headers.forEach { sb.append(it).append("\r\n") }
-                    sb.append("\r\n")
-                    val reqBytes = sb.toString().toByteArray()
-                    upBucket.consume(reqBytes.size)
-                    upBytesCounter.addAndGet(reqBytes.size.toLong())
-                    remote.getOutputStream().write(reqBytes)
-                    remote.getOutputStream().flush()
-                    relayBidirectional(input, out, remote, upBucket, downBucket, latencyMs)
-                } finally {
-                    try { remote.close() } catch (_: Exception) {}
-                }
-            }
+        } catch (t: Throwable) {
+            // Jaring pengaman terakhir: jangan pernah lempar ke Executor thread
+        } finally {
+            try { client.close() } catch (_: Exception) {}
         }
     }
 
@@ -785,6 +941,7 @@ class ThrottleVpnService : VpnService() {
         } catch (_: Exception) {
         } finally {
             upTask.cancel(true)
+            try { remote.close() } catch (_: Exception) {}
         }
     }
 
@@ -799,6 +956,10 @@ class ThrottleVpnService : VpnService() {
                 }
                 return sb.toString()
             }
+            // Batasi 8KB: kalau klien kirim TLS mentah / binary, jangan baca selamanya
+            if (sb.length > 8192) return sb.toString()
+            // Abaikan byte non-ASCII yang bukan bagian request HTTP
+            if (b in 0..31 && b != 9) continue
             sb.append(b.toChar())
         }
     }
