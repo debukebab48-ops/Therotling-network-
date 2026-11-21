@@ -4,10 +4,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import java.io.BufferedInputStream
 import java.io.FileInputStream
@@ -42,7 +42,9 @@ class ThrottleVpnService : VpnService() {
     private val downBytesCounter = AtomicLong(0L)
     private val upBytesCounter = AtomicLong(0L)
     private var proxyServerSocket: ServerSocket? = null
+    @Volatile
     private var isHotspotProxyActive = false
+    private var wakeLock: PowerManager.WakeLock? = null
 
     @Volatile
     private var isRunning = false
@@ -138,16 +140,17 @@ class ThrottleVpnService : VpnService() {
         }
     }
 
-
-    // TokenBucket yang hilang di file asli - tanpa ini file tidak bisa compile.
-    // rateBps <= 0 = tanpa limit. consume() akan blocking sampai token cukup.
+    // rateBps <= 0 = tanpa limit. Batasi burst maksimal 0.25 detik biar nggak jebol di awal.
     private class TokenBucket(private val rateBps: Long) {
-        private var tokens: Double = 0.0
+        private val maxBurst: Double = if (rateBps > 0) {
+            (rateBps * 0.25).coerceAtLeast(2048.0)
+        } else {
+            0.0
+        }
+        private var tokens: Double = maxBurst
         private var lastRefillNanos: Long = System.nanoTime()
         private val lock = Any()
-        init {
-            tokens = if (rateBps > 0) rateBps.toDouble() else 0.0
-        }
+
         fun consume(bytes: Int) {
             if (rateBps <= 0 || bytes <= 0) return
             var remaining = bytes.toDouble()
@@ -157,7 +160,7 @@ class ThrottleVpnService : VpnService() {
                     val now = System.nanoTime()
                     val elapsedSec = (now - lastRefillNanos) / 1_000_000_000.0
                     if (elapsedSec > 0) {
-                        tokens = (tokens + elapsedSec * rateBps).coerceAtMost(rateBps.toDouble())
+                        tokens = (tokens + elapsedSec * rateBps).coerceAtMost(maxBurst)
                         lastRefillNanos = now
                     }
                     val take = minOf(tokens, remaining)
@@ -176,7 +179,7 @@ class ThrottleVpnService : VpnService() {
         }
     }
 
-        override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
                 val name = intent.getStringExtra(EXTRA_PROFILE_NAME) ?: "Throttle"
@@ -203,7 +206,7 @@ class ThrottleVpnService : VpnService() {
         return START_NOT_STICKY
     }
 
-        private fun buildNotification(profileName: String, trafficText: String, hasTraffic: Boolean = false) =
+    private fun buildNotification(profileName: String, trafficText: String, hasTraffic: Boolean) =
         NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Preset: $profileName")
             .setContentText(trafficText)
@@ -219,6 +222,28 @@ class ThrottleVpnService : VpnService() {
             .setOnlyAlertOnce(true)
             .setOngoing(true)
             .build()
+
+    private fun acquireWakeLock() {
+        try {
+            if (wakeLock?.isHeld == true) return
+            val pm = getSystemService(PowerManager::class.java)
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NetThrottler::ThrottleLock").apply {
+                setReferenceCounted(false)
+                acquire(6 * 60 * 60 * 1000L)
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+            }
+        } catch (_: Exception) {
+        }
+        wakeLock = null
+    }
 
     private fun startVpn(
         profileName: String,
@@ -238,11 +263,12 @@ class ThrottleVpnService : VpnService() {
 
         downBytesCounter.set(0L)
         upBytesCounter.set(0L)
+        acquireWakeLock()
 
         createNotificationChannel()
         startForeground(
             NOTIF_ID,
-            buildNotification(profileName, "↓ 0.0 KB/s  •  ↑ 0.0 KB/s ($profileSub)")
+            buildNotification(profileName, "↓ 0.0 KB/s  •  ↑ 0.0 KB/s ($profileSub)", false)
         )
 
         val builder = Builder()
@@ -301,7 +327,7 @@ class ThrottleVpnService : VpnService() {
                     upKBs,
                     profileSub
                 )
-                nm.notify(NOTIF_ID, buildNotification(profileName, text))
+                nm.notify(NOTIF_ID, buildNotification(profileName, text, (downBytes + upBytes) > 0L))
             } catch (_: InterruptedException) {
                 break
             } catch (_: Exception) {
@@ -569,25 +595,43 @@ class ThrottleVpnService : VpnService() {
         upBps: Long,
         latencyMs: Long
     ) {
-        stopVpn()
+        isHotspotProxyActive = false
+        isRunning = false
+        try {
+            proxyServerSocket?.close()
+        } catch (_: Exception) {
+        }
+        proxyServerSocket = null
+        closeAllSessions()
+        try {
+            vpnInterface?.close()
+        } catch (_: Exception) {
+        }
+        vpnInterface = null
+
         downBytesCounter.set(0L)
         upBytesCounter.set(0L)
-        isHotspotProxyActive = true
-        isRunning = true
+        acquireWakeLock()
 
         createNotificationChannel()
-        val ip = getLocalHotspotIp()
+        val activeIp = getLocalHotspotIp()
         startForeground(
             NOTIF_ID,
-            buildNotification(profileName, "Proxy $ip:$PROXY_PORT • ↓ 0.0 KB/s • ↑ 0.0 KB/s ($profileSub)")
+            buildNotification(profileName, "Proxy $activeIp:$PROXY_PORT • ↓ 0.0 KB/s • ↑ 0.0 KB/s ($profileSub)", false)
         )
+
+        isHotspotProxyActive = true
+        isRunning = true
 
         val upBucket = TokenBucket(upBps)
         val downBucket = TokenBucket(downBps)
 
         globalExecutor.execute {
             try {
-                val server = ServerSocket(PROXY_PORT)
+                val server = ServerSocket().apply {
+                    reuseAddress = true
+                    bind(InetSocketAddress(PROXY_PORT))
+                }
                 proxyServerSocket = server
                 while (isRunning && isHotspotProxyActive) {
                     val clientSock = server.accept()
@@ -605,18 +649,20 @@ class ThrottleVpnService : VpnService() {
                 try {
                     Thread.sleep(1000)
                     if (!isRunning || !isHotspotProxyActive) break
-                    val dKBs = downBytesCounter.getAndSet(0L) / 1024.0
-                    val uKBs = upBytesCounter.getAndSet(0L) / 1024.0
+                    val dBytes = downBytesCounter.getAndSet(0L)
+                    val uBytes = upBytesCounter.getAndSet(0L)
+                    val dKBs = dBytes / 1024.0
+                    val uKBs = uBytes / 1024.0
                     val text = String.format(
                         Locale.US,
                         "Proxy %s:%d • ↓ %.1f KB/s • ↑ %.1f KB/s (%s)",
-                        getLocalHotspotIp(),
+                        activeIp,
                         PROXY_PORT,
                         dKBs,
                         uKBs,
                         profileSub
                     )
-                    nm.notify(NOTIF_ID, buildNotification(profileName, text))
+                    nm.notify(NOTIF_ID, buildNotification(profileName, text, (dBytes + uBytes) > 0L))
                 } catch (_: InterruptedException) {
                     break
                 } catch (_: Exception) {
@@ -996,6 +1042,7 @@ class ThrottleVpnService : VpnService() {
     private fun stopVpn() {
         isRunning = false
         stopHotspotProxyInternal()
+        releaseWakeLock()
         closeAllSessions()
         try {
             vpnInterface?.close()
