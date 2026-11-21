@@ -8,14 +8,21 @@ import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import androidx.core.app.NotificationCompat
+import java.io.BufferedInputStream
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.OutputStream
 import java.net.DatagramPacket
 import java.net.DatagramSocket
+import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.NetworkInterface
+import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketTimeoutException
+import java.net.URI
 import java.nio.ByteBuffer
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
@@ -33,19 +40,22 @@ class ThrottleVpnService : VpnService() {
 
     private val downBytesCounter = AtomicLong(0L)
     private val upBytesCounter = AtomicLong(0L)
-    private var proxyServerSocket: java.net.ServerSocket? = null
+    private var proxyServerSocket: ServerSocket? = null
     private var isHotspotProxyActive = false
+
+    @Volatile
+    private var isRunning = false
 
     fun getLocalHotspotIp(): String {
         try {
-            val interfaces = java.net.NetworkInterface.getNetworkInterfaces() ?: return "127.0.0.1"
+            val interfaces = NetworkInterface.getNetworkInterfaces() ?: return "127.0.0.1"
             while (interfaces.hasMoreElements()) {
                 val intf = interfaces.nextElement()
                 if (!intf.isUp || intf.isLoopback) continue
                 val addrs = intf.inetAddresses
                 while (addrs.hasMoreElements()) {
                     val addr = addrs.nextElement()
-                    if (!addr.isLoopbackAddress && addr is java.net.Inet4Address) {
+                    if (!addr.isLoopbackAddress && addr is Inet4Address) {
                         val ip = addr.hostAddress ?: continue
                         if (ip.startsWith("192.168.") || ip.startsWith("10.") || ip.startsWith("172.")) {
                             return ip
@@ -57,9 +67,6 @@ class ThrottleVpnService : VpnService() {
         }
         return "127.0.0.1"
     }
-
-    @Volatile
-    private var isRunning = false
 
     companion object {
         const val ACTION_START = "ACTION_START"
@@ -104,12 +111,6 @@ class ThrottleVpnService : VpnService() {
             } catch (_: Exception) {
             }
             writeExecutor.shutdownNow()
-                            val hotspotMode = intent.getBooleanExtra(EXTRA_HOTSPOT_MODE, false)
-                if (hotspotMode) {
-                    startHotspotProxy(name, sub, downBps, upBps, latencyMs)
-                    return START_NOT_STICKY
-                }
-
         }
     }
 
@@ -144,8 +145,14 @@ class ThrottleVpnService : VpnService() {
                 val downBps = intent.getLongExtra(EXTRA_DOWN_BPS, 0L)
                 val upBps = intent.getLongExtra(EXTRA_UP_BPS, 0L)
                 val latencyMs = intent.getLongExtra(EXTRA_LATENCY_MS, 0L)
+                val hotspotMode = intent.getBooleanExtra(EXTRA_HOTSPOT_MODE, false)
                 val targetPkg = intent.getStringExtra(EXTRA_TARGET_PKG)
-                startVpn(name, sub, downBps, upBps, latencyMs, targetPkg)
+
+                if (hotspotMode) {
+                    startHotspotProxy(name, sub, downBps, upBps, latencyMs)
+                } else {
+                    startVpn(name, sub, downBps, upBps, latencyMs, targetPkg)
+                }
             }
             ACTION_STOP -> stopVpn()
         }
@@ -177,6 +184,7 @@ class ThrottleVpnService : VpnService() {
         latencyMs: Long,
         targetPkg: String?
     ) {
+        stopHotspotProxyInternal()
         closeAllSessions()
         isRunning = false
         try {
@@ -506,7 +514,11 @@ class ThrottleVpnService : VpnService() {
         } catch (_: Exception) {
         } finally {
             tcpSessions.remove(session.key)?.close()
-                private fun startHotspotProxy(
+        }
+    }
+
+    // ==================== HOTSPOT PROXY ====================
+    private fun startHotspotProxy(
         profileName: String,
         profileSub: String,
         downBps: Long,
@@ -517,7 +529,7 @@ class ThrottleVpnService : VpnService() {
         downBytesCounter.set(0L)
         upBytesCounter.set(0L)
         isHotspotProxyActive = true
-        isRunning = false
+        isRunning = true
 
         createNotificationChannel()
         val ip = getLocalHotspotIp()
@@ -531,7 +543,7 @@ class ThrottleVpnService : VpnService() {
 
         globalExecutor.execute {
             try {
-                val server = java.net.ServerSocket(PROXY_PORT)
+                val server = ServerSocket(PROXY_PORT)
                 proxyServerSocket = server
                 while (isRunning && isHotspotProxyActive) {
                     val clientSock = server.accept()
@@ -569,6 +581,15 @@ class ThrottleVpnService : VpnService() {
         }
     }
 
+    private fun stopHotspotProxyInternal() {
+        isHotspotProxyActive = false
+        try {
+            proxyServerSocket?.close()
+        } catch (_: Exception) {
+        }
+        proxyServerSocket = null
+    }
+
     private fun handleProxyClient(
         client: Socket,
         upBucket: TokenBucket,
@@ -576,7 +597,7 @@ class ThrottleVpnService : VpnService() {
         latencyMs: Long
     ) {
         client.use { cSock ->
-            val input = java.io.BufferedInputStream(cSock.getInputStream())
+            val input = BufferedInputStream(cSock.getInputStream())
             val out = cSock.getOutputStream()
 
             val firstLine = readAsciiLine(input) ?: return
@@ -609,7 +630,7 @@ class ThrottleVpnService : VpnService() {
                     try { remote.close() } catch (_: Exception) {}
                 }
             } else {
-                val uri = java.net.URI(target)
+                val uri = URI(target)
                 val host = uri.host ?: return
                 val port = if (uri.port != -1) uri.port else 80
                 val path = (uri.rawPath?.ifEmpty { "/" } ?: "/") + (uri.rawQuery?.let { "?$it" } ?: "")
@@ -634,8 +655,8 @@ class ThrottleVpnService : VpnService() {
     }
 
     private fun relayBidirectional(
-        clientIn: java.io.InputStream,
-        clientOut: java.io.OutputStream,
+        clientIn: InputStream,
+        clientOut: OutputStream,
         remote: Socket,
         upBucket: TokenBucket,
         downBucket: TokenBucket,
@@ -677,7 +698,7 @@ class ThrottleVpnService : VpnService() {
         }
     }
 
-    private fun readAsciiLine(input: java.io.InputStream): String? {
+    private fun readAsciiLine(input: InputStream): String? {
         val sb = StringBuilder()
         while (true) {
             val b = input.read()
@@ -689,9 +710,6 @@ class ThrottleVpnService : VpnService() {
                 return sb.toString()
             }
             sb.append(b.toChar())
-        }
-    }
-
         }
     }
 
@@ -933,6 +951,7 @@ class ThrottleVpnService : VpnService() {
 
     private fun stopVpn() {
         isRunning = false
+        stopHotspotProxyInternal()
         closeAllSessions()
         try {
             vpnInterface?.close()
