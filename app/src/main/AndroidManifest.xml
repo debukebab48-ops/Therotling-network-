@@ -11,6 +11,8 @@
         android:allowBackup="true"
         android:label="NetThrottler"
         android:theme="@style/Theme.NetThrottler">
+        android:icon="@drawable/ic_launcher_178314930750"
+‎        android:roundIcon="@drawable/ic_launcher_178314930750"
 
         <activity
             android:name=".MainActivity"
