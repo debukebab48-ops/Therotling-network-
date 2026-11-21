@@ -137,11 +137,11 @@ class ThrottleVpnService : VpnService() {
         }
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
-                val name = intent.getStringExtra(EXTRA_PROFILE_NAME) ?: "No Throttling"
-                val sub = intent.getStringExtra(EXTRA_PROFILE_SUB) ?: "No Limit / No Limit"
+                val name = intent.getStringExtra(EXTRA_PROFILE_NAME) ?: "Throttle"
+                val sub = intent.getStringExtra(EXTRA_PROFILE_SUB) ?: "No Limit"
                 val downBps = intent.getLongExtra(EXTRA_DOWN_BPS, 0L)
                 val upBps = intent.getLongExtra(EXTRA_UP_BPS, 0L)
                 val latencyMs = intent.getLongExtra(EXTRA_LATENCY_MS, 0L)
@@ -153,8 +153,306 @@ class ThrottleVpnService : VpnService() {
                 } else {
                     startVpn(name, sub, downBps, upBps, latencyMs, targetPkg)
                 }
+                return START_STICKY
             }
-            ACTION_STOP -> stopVpn()
+            ACTION_STOP -> {
+                stopVpn()
+                stopSelf()
+                return START_NOT_STICKY
+            }
+        }
+        return START_NOT_STICKY
+    }
+
+    private fun buildNotification(profileName: String, trafficText: String, hasTraffic: Boolean) =
+        NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Preset: $profileName")
+            .setContentText(trafficText)
+            .setSmallIcon(if (hasTraffic) R.drawable.ic_notif_active else R.drawable.ic_notif_idle)
+            .setContentIntent(
+                PendingIntent.getActivity(
+                    this,
+                    0,
+                    Intent(this, MainActivity::class.java),
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                )
+            )
+            .setOnlyAlertOnce(true)
+            .setOngoing(true)
+            .build()
+
+    private fun startVpn(
+        profileName: String,
+        profileSub: String,
+        downBps: Long,
+        upBps: Long,
+        latencyMs: Long,
+        targetPkg: String?
+    ) {
+        stopVpn()
+        downBytesCounter.set(0L)
+        upBytesCounter.set(0L)
+        isRunning = true
+
+        createNotificationChannel()
+        startForeground(
+            NOTIF_ID,
+            buildNotification(profileName, "↓ 0.0 KB/s  •  ↑ 0.0 KB/s ($profileSub)", false)
+        )
+
+        val builder = Builder()
+            .setSession("NetThrottler")
+            .addAddress("10.0.0.2", 32)
+            .addRoute("0.0.0.0", 0)
+            .setMtu(1500)
+
+        if (!targetPkg.isNullOrBlank()) {
+            try {
+                builder.addAllowedApplication(targetPkg)
+            } catch (_: PackageManager.NameNotFoundException) {
+            }
+        }
+
+        val pfd = builder.establish() ?: run {
+            stopVpn()
+            return
+        }
+        vpnInterface = pfd
+
+        val upBucket = TokenBucket(upBps)
+        val downBucket = TokenBucket(downBps)
+        val udpSessions = ConcurrentHashMap<String, UdpSession>()
+
+        globalExecutor.execute {
+            runPacketLoop(pfd, upBucket, downBucket, latencyMs, udpSessions)
+        }
+        globalExecutor.execute {
+            runNotificationStatsLoop(profileName, profileSub)
+        }
+    }
+
+    private fun runNotificationStatsLoop(profileName: String, profileSub: String) {
+        val nm = getSystemService(NotificationManager::class.java)
+        while (isRunning && !isHotspotProxyActive) {
+            try {
+                Thread.sleep(1000)
+                if (!isRunning || isHotspotProxyActive) break
+                val downBytes = downBytesCounter.getAndSet(0L)
+                val upBytes = upBytesCounter.getAndSet(0L)
+                val dKBs = downBytes / 1024.0
+                val uKBs = upBytes / 1024.0
+                val text = String.format(
+                    Locale.US,
+                    "↓ %.1f KB/s  •  ↑ %.1f KB/s (%s)",
+                    dKBs,
+                    uKBs,
+                    profileSub
+                )
+                nm.notify(NOTIF_ID, buildNotification(profileName, text, (downBytes + upBytes) > 0L))
+            } catch (_: InterruptedException) {
+                break
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private fun startHotspotProxy(
+        profileName: String,
+        profileSub: String,
+        downBps: Long,
+        upBps: Long,
+        latencyMs: Long
+    ) {
+        stopVpn()
+        downBytesCounter.set(0L)
+        upBytesCounter.set(0L)
+        isHotspotProxyActive = true
+        isRunning = true
+
+        createNotificationChannel()
+        val ip = getLocalHotspotIp()
+        startForeground(
+            NOTIF_ID,
+            buildNotification(profileName, "Proxy $ip:$PROXY_PORT • ↓ 0.0 KB/s • ↑ 0.0 KB/s ($profileSub)", false)
+        )
+
+        val upBucket = TokenBucket(upBps)
+        val downBucket = TokenBucket(downBps)
+
+        globalExecutor.execute {
+            try {
+                val server = java.net.ServerSocket(PROXY_PORT)
+                proxyServerSocket = server
+                while (isRunning && isHotspotProxyActive) {
+                    val clientSock = server.accept()
+                    globalExecutor.execute {
+                        handleProxyClient(clientSock, upBucket, downBucket, latencyMs)
+                    }
+                }
+            } catch (_: Exception) {
+            }
+        }
+
+        globalExecutor.execute {
+            val nm = getSystemService(NotificationManager::class.java)
+            while (isRunning && isHotspotProxyActive) {
+                try {
+                    Thread.sleep(1000)
+                    if (!isRunning || !isHotspotProxyActive) break
+                    val downBytes = downBytesCounter.getAndSet(0L)
+                    val upBytes = upBytesCounter.getAndSet(0L)
+                    val dKBs = downBytes / 1024.0
+                    val uKBs = upBytes / 1024.0
+                    val text = String.format(
+                        Locale.US,
+                        "Proxy %s:%d • ↓ %.1f KB/s • ↑ %.1f KB/s (%s)",
+                        getLocalHotspotIp(),
+                        PROXY_PORT,
+                        dKBs,
+                        uKBs,
+                        profileSub
+                    )
+                    nm.notify(NOTIF_ID, buildNotification(profileName, text, (downBytes + upBytes) > 0L))
+                } catch (_: InterruptedException) {
+                    break
+                } catch (_: Exception) {
+                }
+            }
+        }
+    }
+
+    private fun handleProxyClient(
+        client: Socket,
+        upBucket: TokenBucket,
+        downBucket: TokenBucket,
+        latencyMs: Long
+    ) {
+        client.use { cSock ->
+            val input = java.io.BufferedInputStream(cSock.getInputStream())
+            val out = cSock.getOutputStream()
+
+            val firstLine = readAsciiLine(input) ?: return
+            val headers = mutableListOf<String>()
+            while (true) {
+                val line = readAsciiLine(input) ?: return
+                if (line.isEmpty()) break
+                if (!line.startsWith("Proxy-", ignoreCase = true)) {
+                    headers.add(line)
+                }
+            }
+
+            val parts = firstLine.split(" ")
+            if (parts.size < 2) return
+            val method = parts[0].uppercase(Locale.US)
+            val target = parts[1]
+
+            if (method == "CONNECT") {
+                val hostPort = target.split(":")
+                val host = hostPort[0]
+                val port = hostPort.getOrNull(1)?.toIntOrNull() ?: 443
+                val remote = Socket()
+                try {
+                    remote.connect(InetSocketAddress(host, port), 10000)
+                    if (latencyMs > 0) Thread.sleep(latencyMs)
+                    out.write("HTTP/1.1 200 Connection Established\r\n\r\n".toByteArray())
+                    out.flush()
+                    relayBidirectional(input, out, remote, upBucket, downBucket, latencyMs)
+                } finally {
+                    try { remote.close() } catch (_: Exception) {}
+                }
+            } else {
+                val uri = java.net.URI(target)
+                val host = uri.host ?: return
+                val port = if (uri.port != -1) uri.port else 80
+                val path = (uri.rawPath?.ifEmpty { "/" } ?: "/") + (uri.rawQuery?.let { "?$it" } ?: "")
+                val remote = Socket()
+                try {
+                    remote.connect(InetSocketAddress(host, port), 10000)
+                    if (latencyMs > 0) Thread.sleep(latencyMs)
+                    val sb = StringBuilder("$method $path HTTP/1.1\r\n")
+                    headers.forEach { sb.append(it).append("\r\n") }
+                    sb.append("\r\n")
+                    val reqBytes = sb.toString().toByteArray()
+                    upBucket.consume(reqBytes.size)
+                    upBytesCounter.addAndGet(reqBytes.size.toLong())
+                    remote.getOutputStream().write(reqBytes)
+                    remote.getOutputStream().flush()
+                    relayBidirectional(input, out, remote, upBucket, downBucket, latencyMs)
+                } finally {
+                    try { remote.close() } catch (_: Exception) {}
+                }
+            }
+        }
+    }
+
+    private fun relayBidirectional(
+        clientIn: java.io.InputStream,
+        clientOut: java.io.OutputStream,
+        remote: Socket,
+        upBucket: TokenBucket,
+        downBucket: TokenBucket,
+        latencyMs: Long
+    ) {
+        val remoteIn = remote.getInputStream()
+        val remoteOut = remote.getOutputStream()
+
+        val upTask = globalExecutor.submit {
+            val buf = ByteArray(2048)
+            try {
+                while (isRunning && isHotspotProxyActive) {
+                    val n = clientIn.read(buf)
+                    if (n <= 0) break
+                    upBucket.consume(n)
+                    if (latencyMs > 0) Thread.sleep(latencyMs)
+                    upBytesCounter.addAndGet(n.toLong())
+                    remoteOut.write(buf, 0, n)
+                    remoteOut.flush()
+                }
+            } catch (_: Exception) {
+            }
+        }
+
+        val bufDown = ByteArray(2048)
+        try {
+            while (isRunning && isHotspotProxyActive) {
+                val n = remoteIn.read(bufDown)
+                if (n <= 0) break
+                downBucket.consume(n)
+                if (latencyMs > 0) Thread.sleep(latencyMs)
+                downBytesCounter.addAndGet(n.toLong())
+                clientOut.write(bufDown, 0, n)
+                clientOut.flush()
+            }
+        } catch (_: Exception) {
+        } finally {
+            upTask.cancel(true)
+        }
+    }
+
+    private fun readAsciiLine(input: java.io.InputStream): String? {
+        val sb = StringBuilder()
+        while (true) {
+            val b = input.read()
+            if (b == -1) return if (sb.isEmpty()) null else sb.toString()
+            if (b == '\n'.code) {
+                if (sb.isNotEmpty() && sb.last() == '\r') {
+                    sb.deleteCharAt(sb.length - 1)
+                }
+                return sb.toString()
+            }
+            sb.append(b.toChar())
+        }
+    }
+
+    private fun stopVpn() {
+        isRunning = false
+        isHotspotProxyActive = false
+        try { proxyServerSocket?.close() } catch (_: Exception) {}
+        proxyServerSocket = null
+        try { vpnInterface?.close() } catch (_: Exception) {}
+        vpnInterface = null
+    }
+
         }
         return START_NOT_STICKY
     }
