@@ -9,7 +9,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -71,6 +70,7 @@ fun ThrottlerScreen() {
         mutableStateOf(Presets.createCustom(downKbps = 512, upKbps = 256, latencyMs = 80))
     }
     var selectedProfile by remember { mutableStateOf(Presets.list[0]) }
+    var editingProfile by remember { mutableStateOf<ThrottleProfile?>(null) }
     var isRunning by remember { mutableStateOf(false) }
     var isGlobalMode by remember { mutableStateOf(true) }
     var selectedAppPkg by remember { mutableStateOf<String?>(null) }
@@ -78,7 +78,6 @@ fun ThrottlerScreen() {
 
     var showModeMenu by remember { mutableStateOf(false) }
     var showAppPicker by remember { mutableStateOf(false) }
-    var showCustomDialog by remember { mutableStateOf(false) }
 
     fun sendStartService(profile: ThrottleProfile) {
         val intent = Intent(context, ThrottleVpnService::class.java).apply {
@@ -191,15 +190,6 @@ fun ThrottlerScreen() {
                                 )
                             }
                         }
-                    },
-                    actions = {
-                        IconButton(onClick = { showCustomDialog = true }) {
-                            Icon(
-                                imageVector = Icons.Default.Tune,
-                                contentDescription = "Custom Limit",
-                                tint = ClassicTextPrimary
-                            )
-                        }
                     }
                 )
 
@@ -247,24 +237,8 @@ fun ThrottlerScreen() {
                     .background(ClassicSurface)
                     .border(width = 1.dp, color = ClassicBorder)
                     .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                OutlinedButton(
-                    onClick = { showCustomDialog = true },
-                    shape = RoundedCornerShape(6.dp),
-                    border = BorderStroke(1.dp, ClassicBorder),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        containerColor = ClassicBlack,
-                        contentColor = ClassicTextPrimary
-                    ),
-                    modifier = Modifier.height(46.dp)
-                ) {
-                    Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Custom", fontSize = 14.sp)
-                }
-
                 Button(
                     onClick = {
                         if (isRunning) stopVpn() else startOrRestartVpn()
@@ -275,7 +249,7 @@ fun ThrottlerScreen() {
                         contentColor = Color.White
                     ),
                     modifier = Modifier
-                        .weight(1f)
+                        .fillMaxWidth()
                         .height(46.dp)
                 ) {
                     Icon(
@@ -316,16 +290,12 @@ fun ThrottlerScreen() {
                             shape = RoundedCornerShape(6.dp)
                         )
                         .clickable {
-                            if (profile.id == "custom" && isSelected) {
-                                showCustomDialog = true
-                            } else {
-                                selectedProfile = profile
-                                if (isRunning) {
-                                    startOrRestartVpn(profile)
-                                }
+                            selectedProfile = profile
+                            if (isRunning) {
+                                startOrRestartVpn(profile)
                             }
                         }
-                        .padding(horizontal = 14.dp, vertical = 13.dp),
+                        .padding(start = 14.dp, end = 6.dp, top = 11.dp, bottom = 11.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
@@ -350,23 +320,15 @@ fun ThrottlerScreen() {
                             color = if (isSelected) ClassicAccent else ClassicTextSecondary
                         )
                     }
-                    if (profile.id == "custom") {
-                        IconButton(
-                            onClick = { showCustomDialog = true },
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Edit,
-                                contentDescription = "Edit Custom",
-                                tint = ClassicTextSecondary,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                    } else {
+                    // Tombol Custom Limit dipindah ke posisi tanda panah kanan ini
+                    IconButton(
+                        onClick = { editingProfile = profile },
+                        modifier = Modifier.size(38.dp)
+                    ) {
                         Icon(
                             imageVector = Icons.Default.ChevronRight,
-                            contentDescription = null,
-                            tint = ClassicTextSecondary
+                            contentDescription = "Custom Limit",
+                            tint = if (isSelected) ClassicAccent else ClassicTextSecondary
                         )
                     }
                 }
@@ -374,24 +336,24 @@ fun ThrottlerScreen() {
         }
     }
 
-    // Dialog Custom Limit
-    if (showCustomDialog) {
-        var downInput by remember {
-            mutableStateOf(if (customProfile.downloadBps > 0) ((customProfile.downloadBps * 8) / 1024).toString() else "512")
+    // Dialog Custom Limit (dibuka dari tombol '>' di kartu)
+    editingProfile?.let { target ->
+        var downInput by remember(target) {
+            mutableStateOf(if (target.downloadBps > 0) ((target.downloadBps * 8) / 1024).toString() else "0")
         }
-        var upInput by remember {
-            mutableStateOf(if (customProfile.uploadBps > 0) ((customProfile.uploadBps * 8) / 1024).toString() else "256")
+        var upInput by remember(target) {
+            mutableStateOf(if (target.uploadBps > 0) ((target.uploadBps * 8) / 1024).toString() else "0")
         }
-        var latencyInput by remember {
-            mutableStateOf(customProfile.latencyMs.toString())
+        var latencyInput by remember(target) {
+            mutableStateOf(target.latencyMs.toString())
         }
 
         AlertDialog(
-            onDismissRequest = { showCustomDialog = false },
+            onDismissRequest = { editingProfile = null },
             containerColor = ClassicSurface,
             titleContentColor = ClassicTextPrimary,
             title = {
-                Text("Custom Limit", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Text("Custom Limit (${target.name})", fontWeight = FontWeight.Bold, fontSize = 16.sp)
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -435,7 +397,7 @@ fun ThrottlerScreen() {
                         val updated = Presets.createCustom(d, u, l)
                         customProfile = updated
                         selectedProfile = updated
-                        showCustomDialog = false
+                        editingProfile = null
                         if (isRunning) {
                             startOrRestartVpn(updated)
                         }
@@ -446,14 +408,14 @@ fun ThrottlerScreen() {
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showCustomDialog = false }) {
+                TextButton(onClick = { editingProfile = null }) {
                     Text("Batal", color = ClassicTextSecondary)
                 }
             }
         )
     }
 
-    // Dialog App Picker
+    // Dialog App Picker + Tombol/Bar Pencarian
     if (showAppPicker) {
         val pm = context.packageManager
         val apps = remember {
@@ -462,31 +424,71 @@ fun ThrottlerScreen() {
                 .map { it.packageName to pm.getApplicationLabel(it).toString() }
                 .sortedBy { it.second.lowercase() }
         }
+        var searchQuery by remember { mutableStateOf("") }
+        val filteredApps = remember(searchQuery, apps) {
+            if (searchQuery.isBlank()) {
+                apps
+            } else {
+                val q = searchQuery.trim().lowercase()
+                apps.filter { (pkg, name) ->
+                    name.lowercase().contains(q) || pkg.lowercase().contains(q)
+                }
+            }
+        }
+
         AlertDialog(
             onDismissRequest = { showAppPicker = false },
             containerColor = ClassicSurface,
             title = { Text("Pilih Aplikasi Target", color = ClassicTextPrimary) },
             text = {
-                LazyColumn(
-                    modifier = Modifier.height(360.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    items(apps) { (pkg, name) ->
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .border(1.dp, ClassicBorder, RoundedCornerShape(4.dp))
-                                .clickable {
-                                    isGlobalMode = false
-                                    selectedAppPkg = pkg
-                                    selectedAppName = name
-                                    showAppPicker = false
-                                    if (isRunning) startOrRestartVpn()
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = { Text("Cari nama aplikasi...", fontSize = 13.sp, color = ClassicTextSecondary) },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = "Cari",
+                                tint = ClassicAccent
+                            )
+                        },
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { searchQuery = "" }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Hapus",
+                                        tint = ClassicTextSecondary
+                                    )
                                 }
-                                .padding(horizontal = 12.dp, vertical = 10.dp)
-                        ) {
-                            Text(text = name, color = ClassicTextPrimary, fontSize = 14.sp)
-                            Text(text = pkg, color = ClassicTextSecondary, fontSize = 11.sp)
+                            }
+                        },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    LazyColumn(
+                        modifier = Modifier.height(320.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        items(filteredApps) { (pkg, name) ->
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .border(1.dp, ClassicBorder, RoundedCornerShape(4.dp))
+                                    .clickable {
+                                        isGlobalMode = false
+                                        selectedAppPkg = pkg
+                                        selectedAppName = name
+                                        showAppPicker = false
+                                        if (isRunning) startOrRestartVpn()
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                            ) {
+                                Text(text = name, color = ClassicTextPrimary, fontSize = 14.sp)
+                                Text(text = pkg, color = ClassicTextSecondary, fontSize = 11.sp)
+                            }
                         }
                     }
                 }
