@@ -159,11 +159,11 @@ class ThrottleVpnService : VpnService() {
         return START_NOT_STICKY
     }
 
-    private fun buildNotification(profileName: String, trafficText: String) =
+        private fun buildNotification(profileName: String, trafficText: String, hasTraffic: Boolean) =
         NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Preset: $profileName")
             .setContentText(trafficText)
-            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setSmallIcon(if (hasTraffic) R.drawable.ic_notif_active else R.drawable.ic_notif_idle)
             .setContentIntent(
                 PendingIntent.getActivity(
                     this,
