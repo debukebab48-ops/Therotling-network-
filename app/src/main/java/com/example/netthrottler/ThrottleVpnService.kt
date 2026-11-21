@@ -2,6 +2,7 @@ package com.example.netthrottler
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Intent
 import android.net.VpnService
 import android.os.Build
@@ -16,9 +17,11 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.SocketTimeoutException
 import java.nio.ByteBuffer
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.random.Random
 
 class ThrottleVpnService : VpnService() {
@@ -27,6 +30,9 @@ class ThrottleVpnService : VpnService() {
     private val globalExecutor = Executors.newCachedThreadPool()
     private val tcpSessions = ConcurrentHashMap<String, TcpSession>()
     private val udpSessions = ConcurrentHashMap<String, UdpSession>()
+
+    private val downBytesCounter = AtomicLong(0L)
+    private val upBytesCounter = AtomicLong(0L)
 
     @Volatile
     private var isRunning = false
@@ -40,6 +46,8 @@ class ThrottleVpnService : VpnService() {
         const val EXTRA_UP_BPS = "EXTRA_UP_BPS"
         const val EXTRA_LATENCY_MS = "EXTRA_LATENCY_MS"
         const val EXTRA_TARGET_PKG = "EXTRA_TARGET_PKG"
+        private const val CHANNEL_ID = "throttle_channel"
+        private const val NOTIF_ID = 1
     }
 
     private class TcpSession(
@@ -111,6 +119,23 @@ class ThrottleVpnService : VpnService() {
         return START_NOT_STICKY
     }
 
+    private fun buildNotification(profileName: String, trafficText: String) =
+        NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Preset: $profileName")
+            .setContentText(trafficText)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentIntent(
+                PendingIntent.getActivity(
+                    this,
+                    0,
+                    Intent(this, MainActivity::class.java),
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                )
+            )
+            .setOnlyAlertOnce(true)
+            .setOngoing(true)
+            .build()
+
     private fun startVpn(
         profileName: String,
         profileSub: String,
@@ -126,20 +151,19 @@ class ThrottleVpnService : VpnService() {
         } catch (_: Exception) {
         }
 
+        downBytesCounter.set(0L)
+        upBytesCounter.set(0L)
+
         createNotificationChannel()
-        val notification = NotificationCompat.Builder(this, "throttle_channel")
-            .setContentTitle("NetThrottler • $profileName")
-            .setContentText(profileSub)
-            .setSmallIcon(android.R.drawable.ic_media_play)
-            .setOngoing(true)
-            .build()
-        startForeground(1, notification)
+        startForeground(
+            NOTIF_ID,
+            buildNotification(profileName, "↓ 0.0 KB/s  •  ↑ 0.0 KB/s ($profileSub)")
+        )
 
         val builder = Builder()
             .setSession("NetThrottler")
             .addAddress("10.0.0.2", 32)
             .addRoute("0.0.0.0", 0)
-            // Daftarkan interface IPv6 lokal agar aplikasi langsung fallback bersih ke IPv4 tanpa hang
             .addAddress("fd00:1:fd00::1", 128)
             .addRoute("::", 0)
             .addDnsServer("8.8.8.8")
@@ -168,6 +192,35 @@ class ThrottleVpnService : VpnService() {
 
         globalExecutor.execute {
             runPacketLoop(vpnInterface!!, upBucket, downBucket, latencyMs)
+        }
+
+        globalExecutor.execute {
+            runNotificationStatsLoop(profileName, profileSub)
+        }
+    }
+
+    private fun runNotificationStatsLoop(profileName: String, profileSub: String) {
+        val nm = getSystemService(NotificationManager::class.java)
+        while (isRunning) {
+            try {
+                Thread.sleep(1000)
+                if (!isRunning) break
+                val downBytes = downBytesCounter.getAndSet(0L)
+                val upBytes = upBytesCounter.getAndSet(0L)
+                val downKBs = downBytes / 1024.0
+                val upKBs = upBytes / 1024.0
+                val text = String.format(
+                    Locale.US,
+                    "↓ %.1f KB/s  •  ↑ %.1f KB/s  (%s)",
+                    downKBs,
+                    upKBs,
+                    profileSub
+                )
+                nm.notify(NOTIF_ID, buildNotification(profileName, text))
+            } catch (_: InterruptedException) {
+                break
+            } catch (_: Exception) {
+            }
         }
     }
 
@@ -268,7 +321,7 @@ class ThrottleVpnService : VpnService() {
                             dstPort = session.clientPort,
                             seq = session.serverSeq,
                             ack = session.clientSeq,
-                            flags = 0x12, // SYN + ACK
+                            flags = 0x12,
                             payload = ByteArray(0),
                             includeMss = true
                         )
@@ -288,7 +341,7 @@ class ThrottleVpnService : VpnService() {
                             dstPort = session.clientPort,
                             seq = session.serverSeq,
                             ack = session.clientSeq,
-                            flags = 0x14, // RST + ACK
+                            flags = 0x14,
                             payload = ByteArray(0)
                         )
                         writeToVpn(vpnOut, rst)
@@ -315,6 +368,7 @@ class ThrottleVpnService : VpnService() {
                         session.socket.getOutputStream().write(payload)
                         session.socket.getOutputStream().flush()
                         session.clientSeq = (seqNum + payload.size) and 0xFFFFFFFFL
+                        upBytesCounter.addAndGet(payload.size.toLong())
                     }
 
                     synchronized(session.seqLock) {
@@ -325,7 +379,7 @@ class ThrottleVpnService : VpnService() {
                             dstPort = session.clientPort,
                             seq = session.serverSeq,
                             ack = session.clientSeq,
-                            flags = 0x10, // ACK
+                            flags = 0x10,
                             payload = ByteArray(0)
                         )
                         writeToVpn(vpnOut, ackPkt)
@@ -352,7 +406,7 @@ class ThrottleVpnService : VpnService() {
                             dstPort = session.clientPort,
                             seq = session.serverSeq,
                             ack = session.clientSeq,
-                            flags = 0x11, // FIN + ACK
+                            flags = 0x11,
                             payload = ByteArray(0)
                         )
                         session.serverSeq = (session.serverSeq + 1) and 0xFFFFFFFFL
@@ -386,7 +440,7 @@ class ThrottleVpnService : VpnService() {
                             dstPort = session.clientPort,
                             seq = session.serverSeq,
                             ack = session.clientSeq,
-                            flags = 0x11, // FIN + ACK
+                            flags = 0x11,
                             payload = ByteArray(0)
                         )
                         session.serverSeq = (session.serverSeq + 1) and 0xFFFFFFFFL
@@ -397,6 +451,7 @@ class ThrottleVpnService : VpnService() {
                 if (n > 0) {
                     downBucket.consume(n)
                     if (latencyMs > 0) Thread.sleep(latencyMs)
+                    downBytesCounter.addAndGet(n.toLong())
 
                     val chunk = readBuf.copyOfRange(0, n)
                     synchronized(session.seqLock) {
@@ -407,7 +462,7 @@ class ThrottleVpnService : VpnService() {
                             dstPort = session.clientPort,
                             seq = session.serverSeq,
                             ack = session.clientSeq,
-                            flags = 0x18, // PSH + ACK
+                            flags = 0x18,
                             payload = chunk
                         )
                         session.serverSeq = (session.serverSeq + n) and 0xFFFFFFFFL
@@ -462,6 +517,7 @@ class ThrottleVpnService : VpnService() {
                             if (respPacket.length > 0) {
                                 downBucket.consume(respPacket.length)
                                 if (latencyMs > 0) Thread.sleep(latencyMs)
+                                downBytesCounter.addAndGet(respPacket.length.toLong())
 
                                 val ipPacket = buildUdpPacket(
                                     srcIp = newSession.serverIp,
@@ -491,6 +547,7 @@ class ThrottleVpnService : VpnService() {
                 upBucket.consume(payload.size)
                 if (latencyMs > 0) Thread.sleep(latencyMs)
                 activeSession.socket.send(DatagramPacket(payload, payload.size, dstIp, dstPort))
+                upBytesCounter.addAndGet(payload.size.toLong())
             } catch (_: Exception) {
                 udpSessions.remove(key)?.close()
             }
@@ -523,7 +580,7 @@ class ThrottleVpnService : VpnService() {
         buf.putShort(Random.nextInt(1, 65535).toShort())
         buf.putShort(0x4000.toShort())
         buf.put(64.toByte())
-        buf.put(6.toByte()) // TCP
+        buf.put(6.toByte())
         buf.putShort(0)
         buf.put(srcIp)
         buf.put(dstIp)
@@ -539,7 +596,6 @@ class ThrottleVpnService : VpnService() {
         buf.putShort(0)
         buf.putShort(0)
         if (includeMss) {
-            // TCP MSS Option = 1360 bytes
             buf.put(2.toByte())
             buf.put(4.toByte())
             buf.putShort(1360.toShort())
@@ -569,7 +625,7 @@ class ThrottleVpnService : VpnService() {
         buf.putShort(Random.nextInt(1, 65535).toShort())
         buf.putShort(0x4000.toShort())
         buf.put(64.toByte())
-        buf.put(17.toByte()) // UDP
+        buf.put(17.toByte())
         buf.putShort(0)
         buf.put(srcIp)
         buf.put(dstIp)
@@ -670,7 +726,7 @@ class ThrottleVpnService : VpnService() {
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
-                "throttle_channel",
+                CHANNEL_ID,
                 "Network Throttler",
                 NotificationManager.IMPORTANCE_LOW
             )
