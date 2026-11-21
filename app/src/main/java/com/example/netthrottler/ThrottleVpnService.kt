@@ -14,16 +14,19 @@ import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.net.SocketTimeoutException
 import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlin.random.Random
 
 class ThrottleVpnService : VpnService() {
 
     private var vpnInterface: ParcelFileDescriptor? = null
-    private val executor = Executors.newCachedThreadPool()
+    private val globalExecutor = Executors.newCachedThreadPool()
     private val tcpSessions = ConcurrentHashMap<String, TcpSession>()
+    private val udpSessions = ConcurrentHashMap<String, UdpSession>()
 
     @Volatile
     private var isRunning = false
@@ -45,9 +48,38 @@ class ThrottleVpnService : VpnService() {
         val serverIp: ByteArray,
         val clientPort: Int,
         val serverPort: Int,
-        var clientSeq: Long,
-        var serverSeq: Long,
-        val socket: Socket = Socket()
+        @Volatile var clientSeq: Long,
+        @Volatile var serverSeq: Long,
+        val socket: Socket = Socket(),
+        val writeExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    ) {
+        val seqLock = Any()
+
+        @Volatile
+        var closed = false
+
+        @Volatile
+        var connected = false
+
+        fun close() {
+            if (closed) return
+            closed = true
+            try {
+                socket.close()
+            } catch (_: Exception) {
+            }
+            writeExecutor.shutdownNow()
+        }
+    }
+
+    private class UdpSession(
+        val key: String,
+        val clientIp: ByteArray,
+        val serverIp: ByteArray,
+        val clientPort: Int,
+        val serverPort: Int,
+        val socket: DatagramSocket,
+        val sendExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     ) {
         @Volatile
         var closed = false
@@ -59,6 +91,7 @@ class ThrottleVpnService : VpnService() {
                 socket.close()
             } catch (_: Exception) {
             }
+            sendExecutor.shutdownNow()
         }
     }
 
@@ -106,6 +139,9 @@ class ThrottleVpnService : VpnService() {
             .setSession("NetThrottler")
             .addAddress("10.0.0.2", 32)
             .addRoute("0.0.0.0", 0)
+            // Daftarkan interface IPv6 lokal agar aplikasi langsung fallback bersih ke IPv4 tanpa hang
+            .addAddress("fd00:1:fd00::1", 128)
+            .addRoute("::", 0)
             .addDnsServer("8.8.8.8")
             .addDnsServer("1.1.1.1")
             .setMtu(1500)
@@ -130,7 +166,7 @@ class ThrottleVpnService : VpnService() {
         val upBucket = TokenBucket(upBps)
         val downBucket = TokenBucket(downBps)
 
-        executor.execute {
+        globalExecutor.execute {
             runPacketLoop(vpnInterface!!, upBucket, downBucket, latencyMs)
         }
     }
@@ -184,7 +220,6 @@ class ThrottleVpnService : VpnService() {
         val srcPort = readU16(raw, ihl)
         val dstPort = readU16(raw, ihl + 2)
         val seqNum = readU32(raw, ihl + 4)
-        val ackNum = readU32(raw, ihl + 8)
         val dataOffset = ((raw[ihl + 12].toInt() shr 4) and 0xF) * 4
         val flags = raw[ihl + 13].toInt() and 0xFF
 
@@ -195,7 +230,7 @@ class ThrottleVpnService : VpnService() {
 
         val payloadOffset = ihl + dataOffset
         val payloadLen = (length - payloadOffset).coerceAtLeast(0)
-        val key = "${InetAddress.getByAddress(srcIp).hostAddress}:$srcPort->${InetAddress.getByAddress(dstIp).hostAddress}:$dstPort"
+        val key = "${srcIp[0]}.${srcIp[1]}.${srcIp[2]}.${srcIp[3]}:$srcPort->${dstIp[0]}.${dstIp[1]}.${dstIp[2]}.${dstIp[3]}:$dstPort"
 
         if (isRst) {
             tcpSessions.remove(key)?.close()
@@ -216,42 +251,48 @@ class ThrottleVpnService : VpnService() {
             )
             tcpSessions[key] = session
 
-            executor.execute {
+            session.writeExecutor.execute {
                 try {
                     protect(session.socket)
                     session.socket.tcpNoDelay = true
-                    session.socket.connect(InetSocketAddress(InetAddress.getByAddress(dstIp), dstPort), 8000)
+                    session.socket.connect(InetSocketAddress(InetAddress.getByAddress(dstIp), dstPort), 10000)
+                    session.connected = true
 
                     if (latencyMs > 0) Thread.sleep(latencyMs)
 
-                    // Kirim SYN-ACK ke client
-                    val synAck = buildTcpPacket(
-                        srcIp = session.serverIp,
-                        dstIp = session.clientIp,
-                        srcPort = session.serverPort,
-                        dstPort = session.clientPort,
-                        seq = session.serverSeq,
-                        ack = session.clientSeq,
-                        flags = 0x12, // SYN + ACK
-                        payload = ByteArray(0)
-                    )
-                    session.serverSeq = (session.serverSeq + 1) and 0xFFFFFFFFL
-                    writeToVpn(vpnOut, synAck)
+                    synchronized(session.seqLock) {
+                        val synAck = buildTcpPacket(
+                            srcIp = session.serverIp,
+                            dstIp = session.clientIp,
+                            srcPort = session.serverPort,
+                            dstPort = session.clientPort,
+                            seq = session.serverSeq,
+                            ack = session.clientSeq,
+                            flags = 0x12, // SYN + ACK
+                            payload = ByteArray(0),
+                            includeMss = true
+                        )
+                        session.serverSeq = (session.serverSeq + 1) and 0xFFFFFFFFL
+                        writeToVpn(vpnOut, synAck)
+                    }
 
-                    // Thread baca data dari server -> client (Download)
-                    startTcpDownstreamReader(session, vpnOut, downBucket, latencyMs)
+                    globalExecutor.execute {
+                        startTcpDownstreamReader(session, vpnOut, downBucket, latencyMs)
+                    }
                 } catch (_: Exception) {
-                    val rst = buildTcpPacket(
-                        srcIp = session.serverIp,
-                        dstIp = session.clientIp,
-                        srcPort = session.serverPort,
-                        dstPort = session.clientPort,
-                        seq = session.serverSeq,
-                        ack = session.clientSeq,
-                        flags = 0x14, // RST + ACK
-                        payload = ByteArray(0)
-                    )
-                    writeToVpn(vpnOut, rst)
+                    synchronized(session.seqLock) {
+                        val rst = buildTcpPacket(
+                            srcIp = session.serverIp,
+                            dstIp = session.clientIp,
+                            srcPort = session.serverPort,
+                            dstPort = session.clientPort,
+                            seq = session.serverSeq,
+                            ack = session.clientSeq,
+                            flags = 0x14, // RST + ACK
+                            payload = ByteArray(0)
+                        )
+                        writeToVpn(vpnOut, rst)
+                    }
                     tcpSessions.remove(key)?.close()
                 }
             }
@@ -262,31 +303,33 @@ class ThrottleVpnService : VpnService() {
 
         if (payloadLen > 0) {
             val payload = raw.copyOfRange(payloadOffset, length)
-            executor.execute {
+            session.writeExecutor.execute {
                 try {
-                    if (session.closed || !session.socket.isConnected) return@execute
-                    upBucket.consume(payload.size)
-                    if (latencyMs > 0) Thread.sleep(latencyMs)
+                    if (session.closed || !session.connected) return@execute
 
-                    synchronized(session.socket) {
+                    val diff = seqDiff(seqNum, session.clientSeq)
+                    if (diff == 0) {
+                        upBucket.consume(payload.size)
+                        if (latencyMs > 0) Thread.sleep(latencyMs)
+
                         session.socket.getOutputStream().write(payload)
                         session.socket.getOutputStream().flush()
+                        session.clientSeq = (seqNum + payload.size) and 0xFFFFFFFFL
                     }
 
-                    val nextClientSeq = (seqNum + payload.size) and 0xFFFFFFFFL
-                    session.clientSeq = nextClientSeq
-
-                    val ackPkt = buildTcpPacket(
-                        srcIp = session.serverIp,
-                        dstIp = session.clientIp,
-                        srcPort = session.serverPort,
-                        dstPort = session.clientPort,
-                        seq = session.serverSeq,
-                        ack = session.clientSeq,
-                        flags = 0x10, // ACK
-                        payload = ByteArray(0)
-                    )
-                    writeToVpn(vpnOut, ackPkt)
+                    synchronized(session.seqLock) {
+                        val ackPkt = buildTcpPacket(
+                            srcIp = session.serverIp,
+                            dstIp = session.clientIp,
+                            srcPort = session.serverPort,
+                            dstPort = session.clientPort,
+                            seq = session.serverSeq,
+                            ack = session.clientSeq,
+                            flags = 0x10, // ACK
+                            payload = ByteArray(0)
+                        )
+                        writeToVpn(vpnOut, ackPkt)
+                    }
                 } catch (_: Exception) {
                     tcpSessions.remove(key)?.close()
                 }
@@ -294,20 +337,32 @@ class ThrottleVpnService : VpnService() {
         }
 
         if (isFin) {
-            session.clientSeq = (seqNum + payloadLen + 1) and 0xFFFFFFFFL
-            val finAck = buildTcpPacket(
-                srcIp = session.serverIp,
-                dstIp = session.clientIp,
-                srcPort = session.serverPort,
-                dstPort = session.clientPort,
-                seq = session.serverSeq,
-                ack = session.clientSeq,
-                flags = 0x11, // FIN + ACK
-                payload = ByteArray(0)
-            )
-            session.serverSeq = (session.serverSeq + 1) and 0xFFFFFFFFL
-            writeToVpn(vpnOut, finAck)
-            tcpSessions.remove(key)?.close()
+            session.writeExecutor.execute {
+                try {
+                    if (session.closed) return@execute
+                    val expectedFinSeq = (seqNum + payloadLen) and 0xFFFFFFFFL
+                    if (seqDiff(expectedFinSeq, session.clientSeq) == 0) {
+                        session.clientSeq = (expectedFinSeq + 1) and 0xFFFFFFFFL
+                    }
+                    synchronized(session.seqLock) {
+                        val finAck = buildTcpPacket(
+                            srcIp = session.serverIp,
+                            dstIp = session.clientIp,
+                            srcPort = session.serverPort,
+                            dstPort = session.clientPort,
+                            seq = session.serverSeq,
+                            ack = session.clientSeq,
+                            flags = 0x11, // FIN + ACK
+                            payload = ByteArray(0)
+                        )
+                        session.serverSeq = (session.serverSeq + 1) and 0xFFFFFFFFL
+                        writeToVpn(vpnOut, finAck)
+                    }
+                } catch (_: Exception) {
+                } finally {
+                    tcpSessions.remove(key)?.close()
+                }
+            }
         }
     }
 
@@ -317,24 +372,26 @@ class ThrottleVpnService : VpnService() {
         downBucket: TokenBucket,
         latencyMs: Long
     ) {
-        val readBuf = ByteArray(1360) // Aman di bawah MTU 1500
+        val readBuf = ByteArray(1360)
         try {
             val inStream = session.socket.getInputStream()
             while (isRunning && !session.closed) {
                 val n = inStream.read(readBuf)
                 if (n == -1) {
-                    val finPkt = buildTcpPacket(
-                        srcIp = session.serverIp,
-                        dstIp = session.clientIp,
-                        srcPort = session.serverPort,
-                        dstPort = session.clientPort,
-                        seq = session.serverSeq,
-                        ack = session.clientSeq,
-                        flags = 0x11, // FIN + ACK
-                        payload = ByteArray(0)
-                    )
-                    session.serverSeq = (session.serverSeq + 1) and 0xFFFFFFFFL
-                    writeToVpn(vpnOut, finPkt)
+                    synchronized(session.seqLock) {
+                        val finPkt = buildTcpPacket(
+                            srcIp = session.serverIp,
+                            dstIp = session.clientIp,
+                            srcPort = session.serverPort,
+                            dstPort = session.clientPort,
+                            seq = session.serverSeq,
+                            ack = session.clientSeq,
+                            flags = 0x11, // FIN + ACK
+                            payload = ByteArray(0)
+                        )
+                        session.serverSeq = (session.serverSeq + 1) and 0xFFFFFFFFL
+                        writeToVpn(vpnOut, finPkt)
+                    }
                     break
                 }
                 if (n > 0) {
@@ -342,18 +399,20 @@ class ThrottleVpnService : VpnService() {
                     if (latencyMs > 0) Thread.sleep(latencyMs)
 
                     val chunk = readBuf.copyOfRange(0, n)
-                    val dataPkt = buildTcpPacket(
-                        srcIp = session.serverIp,
-                        dstIp = session.clientIp,
-                        srcPort = session.serverPort,
-                        dstPort = session.clientPort,
-                        seq = session.serverSeq,
-                        ack = session.clientSeq,
-                        flags = 0x18, // PSH + ACK
-                        payload = chunk
-                    )
-                    session.serverSeq = (session.serverSeq + n) and 0xFFFFFFFFL
-                    writeToVpn(vpnOut, dataPkt)
+                    synchronized(session.seqLock) {
+                        val dataPkt = buildTcpPacket(
+                            srcIp = session.serverIp,
+                            dstIp = session.clientIp,
+                            srcPort = session.serverPort,
+                            dstPort = session.clientPort,
+                            seq = session.serverSeq,
+                            ack = session.clientSeq,
+                            flags = 0x18, // PSH + ACK
+                            payload = chunk
+                        )
+                        session.serverSeq = (session.serverSeq + n) and 0xFFFFFFFFL
+                        writeToVpn(vpnOut, dataPkt)
+                    }
                 }
             }
         } catch (_: Exception) {
@@ -382,38 +441,65 @@ class ThrottleVpnService : VpnService() {
         val payloadOffset = ihl + 8
         val payload = raw.copyOfRange(payloadOffset, length)
 
-        executor.execute {
+        val key = "$srcPort->${dstIpBytes[0]}.${dstIpBytes[1]}.${dstIpBytes[2]}.${dstIpBytes[3]}:$dstPort"
+
+        var session = udpSessions[key]
+        if (session == null || session.closed) {
             try {
+                val sock = DatagramSocket()
+                protect(sock)
+                sock.soTimeout = 30000
+                val newSession = UdpSession(key, srcIp, dstIpBytes, srcPort, dstPort, sock)
+                udpSessions[key] = newSession
+                session = newSession
+
+                globalExecutor.execute {
+                    val respBuf = ByteArray(4096)
+                    val respPacket = DatagramPacket(respBuf, respBuf.size)
+                    try {
+                        while (isRunning && !newSession.closed) {
+                            sock.receive(respPacket)
+                            if (respPacket.length > 0) {
+                                downBucket.consume(respPacket.length)
+                                if (latencyMs > 0) Thread.sleep(latencyMs)
+
+                                val ipPacket = buildUdpPacket(
+                                    srcIp = newSession.serverIp,
+                                    dstIp = newSession.clientIp,
+                                    srcPort = newSession.serverPort,
+                                    dstPort = newSession.clientPort,
+                                    payload = respBuf.copyOfRange(0, respPacket.length)
+                                )
+                                writeToVpn(vpnOut, ipPacket)
+                            }
+                        }
+                    } catch (_: SocketTimeoutException) {
+                    } catch (_: Exception) {
+                    } finally {
+                        udpSessions.remove(key)?.close()
+                    }
+                }
+            } catch (_: Exception) {
+                return
+            }
+        }
+
+        val activeSession = session
+        activeSession.sendExecutor.execute {
+            try {
+                if (activeSession.closed) return@execute
                 upBucket.consume(payload.size)
                 if (latencyMs > 0) Thread.sleep(latencyMs)
-
-                val socket = DatagramSocket()
-                protect(socket)
-                socket.soTimeout = 5000
-                socket.send(DatagramPacket(payload, payload.size, dstIp, dstPort))
-
-                val respBuf = ByteArray(4096)
-                val respPacket = DatagramPacket(respBuf, respBuf.size)
-                socket.receive(respPacket)
-                socket.close()
-
-                downBucket.consume(respPacket.length)
-                if (latencyMs > 0) Thread.sleep(latencyMs)
-
-                val ipPacket = buildUdpPacket(
-                    srcIp = dstIpBytes,
-                    dstIp = srcIp,
-                    srcPort = dstPort,
-                    dstPort = srcPort,
-                    payload = respBuf.copyOfRange(0, respPacket.length)
-                )
-                writeToVpn(vpnOut, ipPacket)
+                activeSession.socket.send(DatagramPacket(payload, payload.size, dstIp, dstPort))
             } catch (_: Exception) {
+                udpSessions.remove(key)?.close()
             }
         }
     }
 
     // ==================== PACKET BUILDERS & CHECKSUMS ====================
+    private fun seqDiff(a: Long, b: Long): Int = ((a - b) and 0xFFFFFFFFL).toInt()
+
     private fun buildTcpPacket(
         srcIp: ByteArray,
         dstIp: ByteArray,
@@ -422,13 +508,15 @@ class ThrottleVpnService : VpnService() {
         seq: Long,
         ack: Long,
         flags: Int,
-        payload: ByteArray
+        payload: ByteArray,
+        includeMss: Boolean = false
     ): ByteArray {
-        val tcpLen = 20 + payload.size
+        val optionsLen = if (includeMss) 4 else 0
+        val tcpHeaderLen = 20 + optionsLen
+        val tcpLen = tcpHeaderLen + payload.size
         val totalLen = 20 + tcpLen
         val buf = ByteBuffer.allocate(totalLen)
 
-        // IPv4 Header
         buf.put(0x45.toByte())
         buf.put(0x00.toByte())
         buf.putShort(totalLen.toShort())
@@ -441,19 +529,24 @@ class ThrottleVpnService : VpnService() {
         buf.put(dstIp)
         buf.putShort(10, computeIpChecksum(buf.array(), 0, 20))
 
-        // TCP Header
         buf.putShort(srcPort.toShort())
         buf.putShort(dstPort.toShort())
         buf.putInt(seq.toInt())
         buf.putInt(ack.toInt())
-        buf.put(0x50.toByte()) // Data offset = 5 (20 bytes)
+        buf.put(((tcpHeaderLen / 4) shl 4).toByte())
         buf.put(flags.toByte())
-        buf.putShort(65535.toShort()) // Window size
-        buf.putShort(0) // Checksum placeholder
-        buf.putShort(0) // Urgent pointer
+        buf.putShort(65535.toShort())
+        buf.putShort(0)
+        buf.putShort(0)
+        if (includeMss) {
+            // TCP MSS Option = 1360 bytes
+            buf.put(2.toByte())
+            buf.put(4.toByte())
+            buf.putShort(1360.toShort())
+        }
         buf.put(payload)
 
-        val tcpChecksum = computeTcpChecksum(srcIp, dstIp, buf.array(), 20, tcpLen)
+        val tcpChecksum = computeTransportChecksum(srcIp, dstIp, 6, buf.array(), 20, tcpLen)
         buf.putShort(36, tcpChecksum)
 
         return buf.array()
@@ -466,13 +559,14 @@ class ThrottleVpnService : VpnService() {
         dstPort: Int,
         payload: ByteArray
     ): ByteArray {
-        val totalLen = 20 + 8 + payload.size
+        val udpLen = 8 + payload.size
+        val totalLen = 20 + udpLen
         val buf = ByteBuffer.allocate(totalLen)
 
         buf.put(0x45.toByte())
         buf.put(0x00.toByte())
         buf.putShort(totalLen.toShort())
-        buf.putShort(0)
+        buf.putShort(Random.nextInt(1, 65535).toShort())
         buf.putShort(0x4000.toShort())
         buf.put(64.toByte())
         buf.put(17.toByte()) // UDP
@@ -483,9 +577,12 @@ class ThrottleVpnService : VpnService() {
 
         buf.putShort(srcPort.toShort())
         buf.putShort(dstPort.toShort())
-        buf.putShort((8 + payload.size).toShort())
+        buf.putShort(udpLen.toShort())
         buf.putShort(0)
         buf.put(payload)
+
+        val udpChecksum = computeTransportChecksum(srcIp, dstIp, 17, buf.array(), 20, udpLen)
+        buf.putShort(26, if (udpChecksum.toInt() == 0) 0xFFFF.toShort() else udpChecksum)
 
         return buf.array()
     }
@@ -503,25 +600,24 @@ class ThrottleVpnService : VpnService() {
         return sum.inv().toShort()
     }
 
-    private fun computeTcpChecksum(
+    private fun computeTransportChecksum(
         srcIp: ByteArray,
         dstIp: ByteArray,
+        protocol: Int,
         packet: ByteArray,
-        tcpOffset: Int,
-        tcpLen: Int
+        transportOffset: Int,
+        transportLen: Int
     ): Short {
         var sum = 0
-        // Pseudo-header
         sum += ((srcIp[0].toInt() and 0xFF) shl 8) or (srcIp[1].toInt() and 0xFF)
         sum += ((srcIp[2].toInt() and 0xFF) shl 8) or (srcIp[3].toInt() and 0xFF)
         sum += ((dstIp[0].toInt() and 0xFF) shl 8) or (dstIp[1].toInt() and 0xFF)
         sum += ((dstIp[2].toInt() and 0xFF) shl 8) or (dstIp[3].toInt() and 0xFF)
-        sum += 6 // Protocol TCP
-        sum += tcpLen
+        sum += protocol
+        sum += transportLen
 
-        // TCP header + payload
-        var i = tcpOffset
-        val end = tcpOffset + tcpLen
+        var i = transportOffset
+        val end = transportOffset + transportLen
         while (i + 1 < end) {
             sum += ((packet[i].toInt() and 0xFF) shl 8) or (packet[i + 1].toInt() and 0xFF)
             i += 2
@@ -556,6 +652,8 @@ class ThrottleVpnService : VpnService() {
     private fun closeAllSessions() {
         tcpSessions.values.forEach { it.close() }
         tcpSessions.clear()
+        udpSessions.values.forEach { it.close() }
+        udpSessions.clear()
     }
 
     private fun stopVpn() {
@@ -582,7 +680,7 @@ class ThrottleVpnService : VpnService() {
 
     override fun onDestroy() {
         stopVpn()
-        executor.shutdownNow()
+        globalExecutor.shutdownNow()
         super.onDestroy()
     }
 }
