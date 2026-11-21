@@ -1,9 +1,12 @@
 package com.example.netthrottler
 
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import android.net.VpnService
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -30,6 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 
 private val ClassicBlack = Color(0xFF000000)
 private val ClassicSurface = Color(0xFF0D0D0D)
@@ -66,8 +70,8 @@ class MainActivity : ComponentActivity() {
 fun ThrottlerScreen() {
     val context = LocalContext.current
 
-    var customProfile by remember {
-        mutableStateOf(Presets.createCustom(downKbps = 512, upKbps = 256, latencyMs = 80))
+    var customProfiles by remember {
+        mutableStateOf(Presets.loadCustomProfiles(context))
     }
     var selectedProfile by remember { mutableStateOf(Presets.list[0]) }
     var editingProfile by remember { mutableStateOf<ThrottleProfile?>(null) }
@@ -78,6 +82,22 @@ fun ThrottlerScreen() {
 
     var showModeMenu by remember { mutableStateOf(false) }
     var showAppPicker by remember { mutableStateOf(false) }
+
+    val notifPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { _ -> }
+
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
 
     fun sendStartService(profile: ThrottleProfile) {
         val intent = Intent(context, ThrottleVpnService::class.java).apply {
@@ -120,8 +140,8 @@ fun ThrottlerScreen() {
         isRunning = false
     }
 
-    val allProfiles = remember(customProfile) {
-        Presets.list + customProfile
+    val allProfiles = remember(customProfiles) {
+        Presets.list + customProfiles
     }
 
     Scaffold(
@@ -193,7 +213,6 @@ fun ThrottlerScreen() {
                     }
                 )
 
-                // Status Bar Classic
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -275,7 +294,7 @@ fun ThrottlerScreen() {
             contentPadding = PaddingValues(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(allProfiles) { profile ->
+            items(allProfiles, key = { it.id }) { profile ->
                 val isSelected = profile.id == selectedProfile.id
                 Row(
                     modifier = Modifier
@@ -320,7 +339,6 @@ fun ThrottlerScreen() {
                             color = if (isSelected) ClassicAccent else ClassicTextSecondary
                         )
                     }
-                    // Tombol Custom Limit dipindah ke posisi tanda panah kanan ini
                     IconButton(
                         onClick = { editingProfile = profile },
                         modifier = Modifier.size(38.dp)
@@ -336,8 +354,11 @@ fun ThrottlerScreen() {
         }
     }
 
-    // Dialog Custom Limit (dibuka dari tombol '>' di kartu)
+    // Dialog Simpan / Edit Custom Preset
     editingProfile?.let { target ->
+        var nameInput by remember(target) {
+            mutableStateOf(if (target.isCustom) target.name else "${target.name} Custom")
+        }
         var downInput by remember(target) {
             mutableStateOf(if (target.downloadBps > 0) ((target.downloadBps * 8) / 1024).toString() else "0")
         }
@@ -353,19 +374,25 @@ fun ThrottlerScreen() {
             containerColor = ClassicSurface,
             titleContentColor = ClassicTextPrimary,
             title = {
-                Text("Custom Limit (${target.name})", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text(
+                    text = if (target.isCustom) "Edit Custom Preset" else "Simpan Custom Preset",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        "Isi 0 jika tidak ingin dilimit (Unlimited).",
-                        fontSize = 12.sp,
-                        color = ClassicTextSecondary
+                    OutlinedTextField(
+                        value = nameInput,
+                        onValueChange = { nameInput = it },
+                        label = { Text("Nama Preset") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
                         value = downInput,
                         onValueChange = { downInput = it.filter { ch -> ch.isDigit() } },
-                        label = { Text("Download (kbps)") },
+                        label = { Text("Download (kbps, 0 = Unlimited)") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
@@ -373,7 +400,7 @@ fun ThrottlerScreen() {
                     OutlinedTextField(
                         value = upInput,
                         onValueChange = { upInput = it.filter { ch -> ch.isDigit() } },
-                        label = { Text("Upload (kbps)") },
+                        label = { Text("Upload (kbps, 0 = Unlimited)") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
@@ -389,22 +416,52 @@ fun ThrottlerScreen() {
                 }
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        val d = downInput.toLongOrNull() ?: 0L
-                        val u = upInput.toLongOrNull() ?: 0L
-                        val l = latencyInput.toLongOrNull() ?: 0L
-                        val updated = Presets.createCustom(d, u, l)
-                        customProfile = updated
-                        selectedProfile = updated
-                        editingProfile = null
-                        if (isRunning) {
-                            startOrRestartVpn(updated)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (target.isCustom) {
+                        TextButton(
+                            onClick = {
+                                val updatedList = customProfiles.filterNot { it.id == target.id }
+                                customProfiles = updatedList
+                                Presets.saveCustomProfiles(context, updatedList)
+                                if (selectedProfile.id == target.id) {
+                                    selectedProfile = Presets.list[0]
+                                    if (isRunning) startOrRestartVpn(Presets.list[0])
+                                }
+                                editingProfile = null
+                            }
+                        ) {
+                            Text("Hapus", color = ClassicRed)
                         }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = ClassicAccent)
-                ) {
-                    Text("Terapkan")
+                    }
+                    Button(
+                        onClick = {
+                            val d = downInput.toLongOrNull() ?: 0L
+                            val u = upInput.toLongOrNull() ?: 0L
+                            val l = latencyInput.toLongOrNull() ?: 0L
+                            val savedPreset = Presets.createCustom(
+                                name = nameInput,
+                                downKbps = d,
+                                upKbps = u,
+                                latencyMs = l,
+                                existingId = if (target.isCustom) target.id else null
+                            )
+                            val updatedList = if (target.isCustom) {
+                                customProfiles.map { if (it.id == target.id) savedPreset else it }
+                            } else {
+                                customProfiles + savedPreset
+                            }
+                            customProfiles = updatedList
+                            Presets.saveCustomProfiles(context, updatedList)
+                            selectedProfile = savedPreset
+                            editingProfile = null
+                            if (isRunning) {
+                                startOrRestartVpn(savedPreset)
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = ClassicAccent)
+                    ) {
+                        Text("Simpan")
+                    }
                 }
             },
             dismissButton = {
@@ -415,7 +472,7 @@ fun ThrottlerScreen() {
         )
     }
 
-    // Dialog App Picker + Tombol/Bar Pencarian
+    // Dialog App Picker + Pencarian
     if (showAppPicker) {
         val pm = context.packageManager
         val apps = remember {
