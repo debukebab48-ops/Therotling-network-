@@ -41,6 +41,9 @@ class ThrottleVpnService : VpnService() {
         const val ACTION_START = "ACTION_START"
         const val ACTION_STOP = "ACTION_STOP"
         const val EXTRA_PROFILE_NAME = "EXTRA_PROFILE_NAME"
+        const val EXTRA_HOTSPOT_MODE = "EXTRA_HOTSPOT_MODE"
+        const val PROXY_PORT = 8080
+
         const val EXTRA_PROFILE_SUB = "EXTRA_PROFILE_SUB"
         const val EXTRA_DOWN_BPS = "EXTRA_DOWN_BPS"
         const val EXTRA_UP_BPS = "EXTRA_UP_BPS"
