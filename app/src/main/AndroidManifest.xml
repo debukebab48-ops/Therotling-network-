@@ -9,10 +9,10 @@
 
     <application
         android:allowBackup="true"
-        android:label="NetThrottler"
-        android:theme="@style/Theme.NetThrottler">
         android:icon="@drawable/ic_launcher_178314930750"
-‎        android:roundIcon="@drawable/ic_launcher_178314930750"
+        android:label="NetThrottler"
+        android:roundIcon="@drawable/ic_launcher_178314930750"
+        android:theme="@style/Theme.NetThrottler">
 
         <activity
             android:name=".MainActivity"
