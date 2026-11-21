@@ -32,7 +32,6 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.random.Random
 
-
 class ThrottleVpnService : VpnService() {
 
     private var vpnInterface: ParcelFileDescriptor? = null
@@ -139,6 +138,44 @@ class ThrottleVpnService : VpnService() {
         }
     }
 
+
+    // TokenBucket yang hilang di file asli - tanpa ini file tidak bisa compile.
+    // rateBps <= 0 = tanpa limit. consume() akan blocking sampai token cukup.
+    private class TokenBucket(private val rateBps: Long) {
+        private var tokens: Double = 0.0
+        private var lastRefillNanos: Long = System.nanoTime()
+        private val lock = Any()
+        init {
+            tokens = if (rateBps > 0) rateBps.toDouble() else 0.0
+        }
+        fun consume(bytes: Int) {
+            if (rateBps <= 0 || bytes <= 0) return
+            var remaining = bytes.toDouble()
+            while (remaining > 0) {
+                val waitMs: Long
+                synchronized(lock) {
+                    val now = System.nanoTime()
+                    val elapsedSec = (now - lastRefillNanos) / 1_000_000_000.0
+                    if (elapsedSec > 0) {
+                        tokens = (tokens + elapsedSec * rateBps).coerceAtMost(rateBps.toDouble())
+                        lastRefillNanos = now
+                    }
+                    val take = minOf(tokens, remaining)
+                    tokens -= take
+                    remaining -= take
+                    if (remaining <= 0) return
+                    waitMs = ((remaining / rateBps) * 1000).toLong().coerceAtLeast(1L)
+                }
+                try {
+                    Thread.sleep(waitMs)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    return
+                }
+            }
+        }
+    }
+
         override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
@@ -165,7 +202,8 @@ class ThrottleVpnService : VpnService() {
         }
         return START_NOT_STICKY
     }
-        private fun buildNotification(profileName: String, trafficText: String, hasTraffic: Boolean) =
+
+        private fun buildNotification(profileName: String, trafficText: String, hasTraffic: Boolean = false) =
         NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Preset: $profileName")
             .setContentText(trafficText)
@@ -204,7 +242,7 @@ class ThrottleVpnService : VpnService() {
         createNotificationChannel()
         startForeground(
             NOTIF_ID,
-            buildNotification(profileName, "↓ 0.0 KB/s  •  ↑ 0.0 KB/s ($profileSub)", false)
+            buildNotification(profileName, "↓ 0.0 KB/s  •  ↑ 0.0 KB/s ($profileSub)")
         )
 
         val builder = Builder()
@@ -263,7 +301,7 @@ class ThrottleVpnService : VpnService() {
                     upKBs,
                     profileSub
                 )
-                nm.notify(NOTIF_ID, buildNotification(profileName, text, (downBytes + upBytes) > 0L))
+                nm.notify(NOTIF_ID, buildNotification(profileName, text))
             } catch (_: InterruptedException) {
                 break
             } catch (_: Exception) {
@@ -541,7 +579,7 @@ class ThrottleVpnService : VpnService() {
         val ip = getLocalHotspotIp()
         startForeground(
             NOTIF_ID,
-            buildNotification(profileName, "Proxy $ip:$PROXY_PORT • ↓ 0.0 KB/s • ↑ 0.0 KB/s ($profileSub)", false)
+            buildNotification(profileName, "Proxy $ip:$PROXY_PORT • ↓ 0.0 KB/s • ↑ 0.0 KB/s ($profileSub)")
         )
 
         val upBucket = TokenBucket(upBps)
@@ -578,7 +616,7 @@ class ThrottleVpnService : VpnService() {
                         uKBs,
                         profileSub
                     )
-                    nm.notify(NOTIF_ID, buildNotification(profileName, text, (dKBs + uKBs) > 0.0))
+                    nm.notify(NOTIF_ID, buildNotification(profileName, text))
                 } catch (_: InterruptedException) {
                     break
                 } catch (_: Exception) {
