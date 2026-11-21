@@ -33,25 +33,6 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.random.Random
 
 
-private class TokenBucket(private val rateBps: Long) {
-    private var tokens: Double = 0.0
-    private var lastRefillNs: Long = System.nanoTime()
-    @Synchronized
-    fun consume(bytes: Int) {
-        if (rateBps <= 0L || bytes <= 0) return
-        val now = System.nanoTime()
-        val elapsedSec = (now - lastRefillNs) / 1_000_000_000.0
-        lastRefillNs = now
-        tokens = minOf(tokens + elapsedSec * rateBps / 8.0, rateBps / 8.0)
-        tokens -= bytes
-        if (tokens < 0) {
-            val waitMs = ((-tokens) / (rateBps / 8.0) * 1000).toLong().coerceIn(0L, 5000L)
-            // release lock while sleeping: wait() releases monitor
-            try { (this as Object).wait(waitMs) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
-        }
-    }
-}
-
 class ThrottleVpnService : VpnService() {
 
     private var vpnInterface: ParcelFileDescriptor? = null
