@@ -315,7 +315,7 @@ lastPresetTime = nowMs
         createNotificationChannel()
         startForeground(
             NOTIF_ID,
-            buildNotification(profileName, "↓ 0.0 KB/s  •  ↑ 0.0 KB/s ($profileSub)", false)
+            buildNotification(profileName, "↓ ${formatSpeed(0)}  •  ↑ ${formatSpeed(0)} ($profileSub)", false)
         )
 
         val builder = Builder()
@@ -659,7 +659,7 @@ private fun runNotificationStatsLoop(profileName: String, profileSub: String, ge
         val activeIp = getLocalHotspotIp()
         startForeground(
             NOTIF_ID,
-            buildNotification(profileName, "Proxy $activeIp:$PROXY_PORT • ↓ 0.0 KB/s • ↑ 0.0 KB/s ($profileSub)", false)
+            buildNotification(profileName, "Proxy $activeIp:$PROXY_PORT • ↓ ${formatSpeed(0)} • ↑ ${formatSpeed(0)} ($profileSub)", false)
         )
 
         isHotspotProxyActive = true
