@@ -8,27 +8,12 @@ android {
     namespace = "com.example.netthrottler"
     compileSdk = 34
 
-    signingConfigs {
-        getByName("debug") {
-            storeFile = file("debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
-        }
-    }
-
     defaultConfig {
         applicationId = "com.example.netthrottler"
         minSdk = 24
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
-    }
-
-    buildTypes {
-        getByName("debug") {
-            signingConfig = signingConfigs.getByName("debug")
-        }
     }
 
     buildFeatures {
