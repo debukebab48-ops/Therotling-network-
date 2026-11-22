@@ -211,19 +211,19 @@ fun ThrottlerScreen() {
                                         showModeMenu = false
                                         if (isRunning) startOrRestartVpn()
                                     }
-HorizontalDivider(color = ClassicBorder)
-DropdownMenuItem(
-    text = { Text(if (speedUnit == "KB/s") "Satuan: KB/s ✓" else "Satuan: KB/s", color = ClassicTextPrimary) },
-    onClick = { speedUnit = "KB/s"; showModeMenu = false; if (isRunning) startOrRestartVpn() }
-)
-DropdownMenuItem(
-    text = { Text(if (speedUnit == "Mbps") "Satuan: Mbps ✓" else "Satuan: Mbps", color = ClassicTextPrimary) },
-    onClick = { speedUnit = "Mbps"; showModeMenu = false; if (isRunning) startOrRestartVpn() }
-)
-DropdownMenuItem(
-    text = { Text(if (speedUnit == "MBps") "Satuan: MB/s ✓" else "Satuan: MB/s", color = ClassicTextPrimary) },
-    onClick = { speedUnit = "MBps"; showModeMenu = false; if (isRunning) startOrRestartVpn() }
-)
+                                )
+                                HorizontalDivider(color = ClassicBorder)
+                                DropdownMenuItem(
+                                    text = { Text(if (speedUnit == "KB/s") "Satuan: KB/s ✓" else "Satuan: KB/s", color = ClassicTextPrimary) },
+                                    onClick = { speedUnit = "KB/s"; showModeMenu = false; if (isRunning) startOrRestartVpn() }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(if (speedUnit == "Mbps") "Satuan: Mbps ✓" else "Satuan: Mbps", color = ClassicTextPrimary) },
+                                    onClick = { speedUnit = "Mbps"; showModeMenu = false; if (isRunning) startOrRestartVpn() }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(if (speedUnit == "MBps") "Satuan: MB/s ✓" else "Satuan: MB/s", color = ClassicTextPrimary) },
+                                    onClick = { speedUnit = "MBps"; showModeMenu = false; if (isRunning) startOrRestartVpn() }
                                 )
                                 HorizontalDivider(color = ClassicBorder)
                                 DropdownMenuItem(

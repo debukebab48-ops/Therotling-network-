@@ -369,12 +369,6 @@ private fun runNotificationStatsLoop(profileName: String, profileSub: String, ge
                 val downKBs = downBytes / 1024.0
                 val upKBs = upBytes / 1024.0
                 val text = "↓ ${formatSpeed(downBytes)}  •  ↑ ${formatSpeed(upBytes)}  ($profileSub)"
-                    Locale.US,
-                    "↓ %.1f KB/s  •  ↑ %.1f KB/s  (%s)",
-                    downKBs,
-                    upKBs,
-                    profileSub
-                )
                 nm.notify(NOTIF_ID, buildNotification(profileName, text, (downBytes + upBytes) > 0L))
             } catch (_: InterruptedException) {
                 break
@@ -725,14 +719,6 @@ globalExecutor.execute {
                     val dKBs = dBytes / 1024.0
                     val uKBs = uBytes / 1024.0
                     val text = "Proxy $activeIp:$PROXY_PORT • ↓ ${formatSpeed(dBytes)} • ↑ ${formatSpeed(uBytes)} ($profileSub)"
-                        Locale.US,
-                        "Proxy %s:%d • ↓ %.1f KB/s • ↑ %.1f KB/s (%s)",
-                        activeIp,
-                        PROXY_PORT,
-                        dKBs,
-                        uKBs,
-                        profileSub
-                    )
                     nm.notify(NOTIF_ID, buildNotification(profileName, text, (dBytes + uBytes) > 0L))
                 } catch (_: InterruptedException) {
                     break
