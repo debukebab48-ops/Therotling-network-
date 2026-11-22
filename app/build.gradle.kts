@@ -19,13 +19,16 @@ android {
     buildFeatures {
         compose = true
     }
+
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.8"
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
     kotlinOptions {
         jvmTarget = "17"
     }
@@ -49,13 +52,19 @@ spotless {
                 mapOf(
                     "indent_size" to "4",
                     "max_line_length" to "120",
-                    "ktlint_standard_no-wildcard-imports" to "disabled"
+                    "ktlint_standard_no-wildcard-imports" to "disabled",
+                    // Mengabaikan aturan function-naming untuk fungsi @Composable
+                    "ktlint_function_naming_ignore_when_annotated_with" to "Composable"
                 )
             )
     }
     kotlinGradle {
         target("**/*.kts")
         ktlint("1.1.0")
-            .editorConfigOverride(mapOf("ktlint_standard_no-wildcard-imports" to "disabled"))
+            .editorConfigOverride(
+                mapOf(
+                    "ktlint_standard_no-wildcard-imports" to "disabled"
+                )
+            )
     }
 }
