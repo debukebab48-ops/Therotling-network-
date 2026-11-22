@@ -1,5 +1,4 @@
 package com.example.netthrottler
-
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -155,8 +154,8 @@ private var lastPresetTime = 0L
         const val EXTRA_LATENCY_MS = "EXTRA_LATENCY_MS"
         const val EXTRA_TARGET_PKG = "EXTRA_TARGET_PKG"
         const val EXTRA_SPEED_UNIT = "EXTRA_SPEED_UNIT"
-        private const val CHANNEL_ID = "throttle_channel"
-        private const val NOTIF_ID = 1
+        private const val CHANNEL_ID = "throttle_channel_v2"
+                private const val NOTIF_ID = 1
     }
 
     private class TcpSession(
@@ -1279,8 +1278,11 @@ globalExecutor.execute {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "Network Throttler",
-                NotificationManager.IMPORTANCE_LOW
-            )
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply {
+                setSound(null, null)
+                enableVibration(false)
+            }
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
     }
