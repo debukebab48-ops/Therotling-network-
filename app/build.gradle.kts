@@ -60,10 +60,17 @@ spotless {
     kotlin {
         target("**/*.kt")
         ktlint("1.1.0")
-            .editorConfigOverride(mapOf("indent_size" to "4", "max_line_length" to "120"))
+            .editorConfigOverride(
+                mapOf(
+                    "indent_size" to "4",
+                    "max_line_length" to "120",
+                    "ktlint_standard_no-wildcard-imports" to "disabled"
+                )
+            )
     }
     kotlinGradle {
         target("**/*.kts")
         ktlint("1.1.0")
+            .editorConfigOverride(mapOf("ktlint_standard_no-wildcard-imports" to "disabled"))
     }
 }
