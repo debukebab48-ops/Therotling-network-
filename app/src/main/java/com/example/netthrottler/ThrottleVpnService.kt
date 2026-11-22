@@ -1,22 +1,22 @@
 package com.example.netthrottler
 
-import androidx.core.app.NotificationCompat
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
-import android.net.VpnService
-import android.os.Build
-import android.os.ParcelFileDescriptor
-import android.os.PowerManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
-import androidx.core.graphics.drawable.IconCompat
 import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.Rect
 import android.graphics.Typeface
+import android.net.VpnService
+import android.os.Build
+import android.os.ParcelFileDescriptor
+import android.os.PowerManager
+import androidx.core.app.NotificationCompat
+import androidx.core.graphics.drawable.IconCompat
 import java.io.BufferedInputStream
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -81,11 +81,17 @@ private fun createSpeedIconBitmap(downBytes: Long): Bitmap {
     canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
 
     val shortText = "↓" + formatSpeedShort(downBytes)
-    iconPaint.textSize = size * 0.65f
+    var textSize = size * 0.55f
+    iconPaint.textSize = textSize
     iconPaint.getTextBounds(shortText, 0, shortText.length, iconBounds)
+    while (iconBounds.width() > size - 4 && textSize > 12f) {
+        textSize -= 2f
+        iconPaint.textSize = textSize
+        iconPaint.getTextBounds(shortText, 0, shortText.length, iconBounds)
+    }
+
     val x = size / 2f
     val y = size / 2f - iconBounds.exactCenterY()
-
     canvas.drawText(shortText, x, y, iconPaint)
     return bitmap
 }
@@ -101,7 +107,7 @@ private fun formatSpeedShort(bytesPerSec: Long): String {
 private fun formatSpeed(bytesPerSec: Long): String {
     return when (speedUnit) {
         "Mbps" -> String.format(Locale.US, "%.1f Mbps", bytesPerSec * 8.0 / 1_000_000.0)
-        "MBps" -> String.format(Locale.US, "%.1f MBps", bytesPerSec / (1024.0 * 1024.0))
+        "MBps" -> String.format(Locale.US, "%.2f MB/s", bytesPerSec / (1024.0 * 1024.0))
         else -> String.format(Locale.US, "%.1f KB/s", bytesPerSec / 1024.0)
     }
 }
@@ -291,12 +297,12 @@ lastPresetTime = nowMs
         }
         return START_NOT_STICKY
     }
-
     private fun buildNotification(profileName: String, trafficText: String, downBytes: Long) =
     NotificationCompat.Builder(this, CHANNEL_ID)
         .setContentTitle("Preset: $profileName")
         .setContentText(trafficText)
         .setSmallIcon(IconCompat.createWithBitmap(createSpeedIconBitmap(downBytes)))
+
             .setContentIntent(
                 PendingIntent.getActivity(
                     this,
@@ -356,7 +362,7 @@ lastPresetTime = nowMs
             NOTIF_ID,
             buildNotification(profileName, "↓ ${formatSpeed(0)}  •  ↑ ${formatSpeed(0)} ($profileSub)", 0L)
         )
-
+        
         val builder = Builder()
             .setSession("NetThrottler")
             .addAddress("10.0.0.2", 32)
