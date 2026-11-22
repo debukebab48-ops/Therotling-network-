@@ -51,9 +51,10 @@ spotless {
             .editorConfigOverride(
                 mapOf(
                     "indent_size" to "4",
-                    "max_line_length" to "120",
+                    // Mengubah "120" menjadi "off" untuk mematikan batas maksimal panjang baris
+                    "max_line_length" to "off", 
+                    
                     "ktlint_standard_no-wildcard-imports" to "disabled",
-                    // Mengabaikan aturan function-naming untuk fungsi @Composable
                     "ktlint_function_naming_ignore_when_annotated_with" to "Composable"
                 )
             )
