@@ -52,11 +52,11 @@ spotless {
                 mapOf(
                     "indent_size" to "4",
                     // Mengubah "120" menjadi "off" untuk mematikan batas maksimal panjang baris
-                    "max_line_length" to "off", 
-                    
+                    "max_line_length" to "off",
+
                     "ktlint_standard_no-wildcard-imports" to "disabled",
-                    "ktlint_function_naming_ignore_when_annotated_with" to "Composable"
-                )
+                    "ktlint_function_naming_ignore_when_annotated_with" to "Composable",
+                ),
             )
     }
     kotlinGradle {
@@ -64,8 +64,8 @@ spotless {
         ktlint("1.1.0")
             .editorConfigOverride(
                 mapOf(
-                    "ktlint_standard_no-wildcard-imports" to "disabled"
-                )
+                    "ktlint_standard_no-wildcard-imports" to "disabled",
+                ),
             )
     }
 }

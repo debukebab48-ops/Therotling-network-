@@ -50,7 +50,7 @@ private val ClassicDarkColors = darkColorScheme(
     surface = ClassicSurface,
     onPrimary = Color.White,
     onBackground = ClassicTextPrimary,
-    onSurface = ClassicTextPrimary
+    onSurface = ClassicTextPrimary,
 )
 
 class MainActivity : ComponentActivity() {
@@ -83,14 +83,14 @@ fun ThrottlerScreen() {
     var showAppPicker by remember { mutableStateOf(false) }
 
     val notifPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
+        ActivityResultContracts.RequestPermission(),
     ) { _ -> }
 
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val granted = ContextCompat.checkSelfPermission(
                 context,
-                Manifest.permission.POST_NOTIFICATIONS
+                Manifest.permission.POST_NOTIFICATIONS,
             ) == android.content.pm.PackageManager.PERMISSION_GRANTED
             if (!granted) {
                 notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -119,7 +119,7 @@ fun ThrottlerScreen() {
     }
 
     val vpnLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
+        ActivityResultContracts.StartActivityForResult(),
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
             sendStartService(selectedProfile)
@@ -159,7 +159,7 @@ fun ThrottlerScreen() {
                 TopAppBar(
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = ClassicBlack,
-                        titleContentColor = ClassicTextPrimary
+                        titleContentColor = ClassicTextPrimary,
                     ),
                     title = {
                         Box {
@@ -169,32 +169,32 @@ fun ThrottlerScreen() {
                                     .border(1.dp, ClassicBorder, RoundedCornerShape(6.dp))
                                     .background(ClassicSurface, RoundedCornerShape(6.dp))
                                     .clickable { showModeMenu = true }
-                                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                                    .padding(horizontal = 10.dp, vertical = 6.dp),
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.GraphicEq,
                                     contentDescription = null,
                                     tint = ClassicAccent,
-                                    modifier = Modifier.size(18.dp)
+                                    modifier = Modifier.size(18.dp),
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = if (isGlobalMode) "Global Mode" else selectedAppName,
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = ClassicTextPrimary
+                                    color = ClassicTextPrimary,
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Icon(
                                     Icons.Default.ArrowDropDown,
                                     contentDescription = null,
-                                    tint = ClassicTextSecondary
+                                    tint = ClassicTextSecondary,
                                 )
                             }
                             DropdownMenu(
                                 expanded = showModeMenu,
                                 onDismissRequest = { showModeMenu = false },
-                                modifier = Modifier.background(ClassicSurface)
+                                modifier = Modifier.background(ClassicSurface),
                             ) {
                                 DropdownMenuItem(
                                     text = { Text("Global Mode (Semua App)", color = ClassicTextPrimary) },
@@ -205,10 +205,10 @@ fun ThrottlerScreen() {
                                         selectedAppName = "Global Mode"
                                         showModeMenu = false
                                         if (isRunning) startOrRestartVpn()
-                                    }
+                                    },
                                 )
                                 HorizontalDivider(color = ClassicBorder)
-                                
+
                                 // --- BARIS YANG DIPERBAIKI (Dipecah agar < 120 karakter) ---
                                 DropdownMenuItem(
                                     text = {
@@ -219,7 +219,7 @@ fun ThrottlerScreen() {
                                         speedUnit = "KB/s"
                                         showModeMenu = false
                                         if (isRunning) startOrRestartVpn()
-                                    }
+                                    },
                                 )
                                 DropdownMenuItem(
                                     text = {
@@ -230,7 +230,7 @@ fun ThrottlerScreen() {
                                         speedUnit = "Mbps"
                                         showModeMenu = false
                                         if (isRunning) startOrRestartVpn()
-                                    }
+                                    },
                                 )
                                 DropdownMenuItem(
                                     text = {
@@ -241,10 +241,10 @@ fun ThrottlerScreen() {
                                         speedUnit = "MBps"
                                         showModeMenu = false
                                         if (isRunning) startOrRestartVpn()
-                                    }
+                                    },
                                 )
                                 // ----------------------------------------------------------------
-                                
+
                                 HorizontalDivider(color = ClassicBorder)
                                 DropdownMenuItem(
                                     text = { Text("Pilih Aplikasi Target...", color = ClassicTextPrimary) },
@@ -252,7 +252,7 @@ fun ThrottlerScreen() {
                                         isHotspotMode = false
                                         showModeMenu = false
                                         showAppPicker = true
-                                    }
+                                    },
                                 )
                                 HorizontalDivider(color = ClassicBorder)
                                 DropdownMenuItem(
@@ -265,11 +265,11 @@ fun ThrottlerScreen() {
                                         hotspotIp = ThrottleVpnService().getLocalHotspotIp()
                                         showModeMenu = false
                                         if (isRunning) startOrRestartVpn()
-                                    }
+                                    },
                                 )
                             }
                         }
-                    }
+                    },
                 )
                 Row(
                     modifier = Modifier
@@ -278,7 +278,7 @@ fun ThrottlerScreen() {
                         .border(width = 1.dp, color = ClassicBorder)
                         .padding(horizontal = 16.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
@@ -286,8 +286,8 @@ fun ThrottlerScreen() {
                                 .size(8.dp)
                                 .background(
                                     if (isRunning) ClassicGreen else ClassicTextSecondary,
-                                    RoundedCornerShape(2.dp)
-                                )
+                                    RoundedCornerShape(2.dp),
+                                ),
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
@@ -295,14 +295,14 @@ fun ThrottlerScreen() {
                             fontSize = 12.sp,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
-                            color = if (isRunning) ClassicGreen else ClassicTextSecondary
+                            color = if (isRunning) ClassicGreen else ClassicTextSecondary,
                         )
                     }
                     Text(
                         text = selectedProfile.subtitle,
                         fontSize = 11.sp,
                         fontFamily = FontFamily.Monospace,
-                        color = ClassicTextSecondary
+                        color = ClassicTextSecondary,
                     )
                 }
                 if (isHotspotMode) {
@@ -315,7 +315,7 @@ fun ThrottlerScreen() {
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(ClassicSurfaceActive)
-                            .padding(horizontal = 16.dp, vertical = 6.dp)
+                            .padding(horizontal = 16.dp, vertical = 6.dp),
                     )
                 }
             }
@@ -327,7 +327,7 @@ fun ThrottlerScreen() {
                     .background(ClassicSurface)
                     .border(width = 1.dp, color = ClassicBorder)
                     .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 Button(
                     onClick = {
@@ -336,26 +336,26 @@ fun ThrottlerScreen() {
                     shape = RoundedCornerShape(6.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (isRunning) ClassicRed else ClassicAccent,
-                        contentColor = Color.White
+                        contentColor = Color.White,
                     ),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(46.dp)
+                        .height(46.dp),
                 ) {
                     Icon(
                         imageVector = if (isRunning) Icons.Default.Stop else Icons.Default.PlayArrow,
                         contentDescription = null,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(20.dp),
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = if (isRunning) "STOP THROTTLE" else "START THROTTLE",
                         fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp
+                        fontSize = 14.sp,
                     )
                 }
             }
-        }
+        },
     ) { padding ->
         LazyColumn(
             modifier = Modifier
@@ -363,7 +363,7 @@ fun ThrottlerScreen() {
                 .background(ClassicBlack)
                 .padding(padding),
             contentPadding = PaddingValues(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             items(allProfiles, key = { it.id }) { profile ->
                 val isSelected = profile.id == selectedProfile.id
@@ -372,12 +372,12 @@ fun ThrottlerScreen() {
                         .fillMaxWidth()
                         .background(
                             color = if (isSelected) ClassicSurfaceActive else ClassicSurface,
-                            shape = RoundedCornerShape(6.dp)
+                            shape = RoundedCornerShape(6.dp),
                         )
                         .border(
                             width = 1.dp,
                             color = if (isSelected) ClassicAccent else ClassicBorder,
-                            shape = RoundedCornerShape(6.dp)
+                            shape = RoundedCornerShape(6.dp),
                         )
                         .clickable {
                             val now = System.currentTimeMillis()
@@ -390,7 +390,7 @@ fun ThrottlerScreen() {
                             }
                         }
                         .padding(start = 14.dp, end = 6.dp, top = 11.dp, bottom = 11.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     // --- BARIS YANG DIPERBAIKI (Dipecah agar < 120 karakter) ---
                     Icon(
@@ -401,7 +401,7 @@ fun ThrottlerScreen() {
                         },
                         contentDescription = null,
                         tint = if (isSelected) ClassicAccent else ClassicTextSecondary,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(20.dp),
                     )
                     // ----------------------------------------------------------------
                     Spacer(modifier = Modifier.width(12.dp))
@@ -410,24 +410,24 @@ fun ThrottlerScreen() {
                             text = profile.name,
                             fontSize = 15.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = if (isSelected) Color.White else ClassicTextPrimary
+                            color = if (isSelected) Color.White else ClassicTextPrimary,
                         )
                         Spacer(modifier = Modifier.height(3.dp))
                         Text(
                             text = profile.subtitle,
                             fontSize = 12.sp,
                             fontFamily = FontFamily.Monospace,
-                            color = if (isSelected) ClassicAccent else ClassicTextSecondary
+                            color = if (isSelected) ClassicAccent else ClassicTextSecondary,
                         )
                     }
                     IconButton(
                         onClick = { editingProfile = profile },
-                        modifier = Modifier.size(38.dp)
+                        modifier = Modifier.size(38.dp),
                     ) {
                         Icon(
                             imageVector = Icons.Default.ChevronRight,
                             contentDescription = "Custom Limit",
-                            tint = if (isSelected) ClassicAccent else ClassicTextSecondary
+                            tint = if (isSelected) ClassicAccent else ClassicTextSecondary,
                         )
                     }
                 }
@@ -457,7 +457,7 @@ fun ThrottlerScreen() {
                 Text(
                     text = if (target.isCustom) "Edit Custom Preset" else "Simpan Custom Preset",
                     fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp
+                    fontSize = 16.sp,
                 )
             },
             text = {
@@ -467,7 +467,7 @@ fun ThrottlerScreen() {
                         onValueChange = { nameInput = it },
                         label = { Text("Nama Preset") },
                         singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
                     )
                     OutlinedTextField(
                         value = downInput,
@@ -475,7 +475,7 @@ fun ThrottlerScreen() {
                         label = { Text("Download (kbps, 0 = Unlimited)") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
                     )
                     OutlinedTextField(
                         value = upInput,
@@ -483,7 +483,7 @@ fun ThrottlerScreen() {
                         label = { Text("Upload (kbps, 0 = Unlimited)") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
                     )
                     OutlinedTextField(
                         value = latencyInput,
@@ -491,7 +491,7 @@ fun ThrottlerScreen() {
                         label = { Text("Latency / Delay (ms)") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
             },
@@ -508,7 +508,7 @@ fun ThrottlerScreen() {
                                     if (isRunning) startOrRestartVpn(Presets.list[0])
                                 }
                                 editingProfile = null
-                            }
+                            },
                         ) {
                             Text("Hapus", color = ClassicRed)
                         }
@@ -523,7 +523,7 @@ fun ThrottlerScreen() {
                                 downKbps = d,
                                 upKbps = u,
                                 latencyMs = l,
-                                existingId = if (target.isCustom) target.id else null
+                                existingId = if (target.isCustom) target.id else null,
                             )
                             val updatedList = if (target.isCustom) {
                                 customProfiles.map { if (it.id == target.id) savedPreset else it }
@@ -538,7 +538,7 @@ fun ThrottlerScreen() {
                                 startOrRestartVpn(savedPreset)
                             }
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = ClassicAccent)
+                        colors = ButtonDefaults.buttonColors(containerColor = ClassicAccent),
                     ) {
                         Text("Simpan")
                     }
@@ -548,7 +548,7 @@ fun ThrottlerScreen() {
                 TextButton(onClick = { editingProfile = null }) {
                     Text("Batal", color = ClassicTextSecondary)
                 }
-            }
+            },
         )
     }
 
@@ -591,7 +591,7 @@ fun ThrottlerScreen() {
                             Icon(
                                 imageVector = Icons.Default.Search,
                                 contentDescription = "Cari",
-                                tint = ClassicAccent
+                                tint = ClassicAccent,
                             )
                         },
                         trailingIcon = {
@@ -600,17 +600,17 @@ fun ThrottlerScreen() {
                                     Icon(
                                         imageVector = Icons.Default.Close,
                                         contentDescription = "Hapus",
-                                        tint = ClassicTextSecondary
+                                        tint = ClassicTextSecondary,
                                     )
                                 }
                             }
                         },
                         singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
                     )
                     LazyColumn(
                         modifier = Modifier.height(320.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         items(filteredApps) { (pkg, name) ->
                             Column(
@@ -624,7 +624,7 @@ fun ThrottlerScreen() {
                                         showAppPicker = false
                                         if (isRunning) startOrRestartVpn()
                                     }
-                                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
                             ) {
                                 Text(text = name, color = ClassicTextPrimary, fontSize = 14.sp)
                                 Text(text = pkg, color = ClassicTextSecondary, fontSize = 11.sp)
@@ -637,7 +637,7 @@ fun ThrottlerScreen() {
                 TextButton(onClick = { showAppPicker = false }) {
                     Text("Batal", color = ClassicTextSecondary)
                 }
-            }
+            },
         )
     }
 }

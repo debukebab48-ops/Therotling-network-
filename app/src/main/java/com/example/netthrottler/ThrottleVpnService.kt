@@ -42,6 +42,7 @@ import kotlin.random.Random
 class ThrottleVpnService : VpnService() {
 
     private var vpnInterface: ParcelFileDescriptor? = null
+
     @Volatile
     private var globalExecutor: ExecutorService = Executors.newCachedThreadPool()
 
@@ -58,75 +59,77 @@ class ThrottleVpnService : VpnService() {
     private val upBytesCounter = AtomicLong(0L)
     private var proxyServerSocket: ServerSocket? = null
     private val proxyClients = ConcurrentHashMap.newKeySet<Socket>()
+
     @Volatile
     private var isHotspotProxyActive = false
     private var wakeLock: PowerManager.WakeLock? = null
 
-@Volatile
-private var isRunning = false
-@Volatile
-private var speedUnit = "KB/s"
+    @Volatile
+    private var isRunning = false
 
-private val iconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-    color = Color.WHITE
-    textAlign = Paint.Align.CENTER
-    typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-    isFilterBitmap = true
-}
-private val iconBounds = Rect()
-private fun createSpeedIconBitmap(downBytes: Long): Bitmap {
-    val size = 96
-    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ALPHA_8)
-    val canvas = Canvas(bitmap)
-    canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+    @Volatile
+    private var speedUnit = "KB/s"
 
-    val speedText = formatSpeedShort(downBytes)
-    var textSize = 72f
-    iconPaint.textScaleX = 1.0f
-    iconPaint.textSize = textSize
-    iconPaint.getTextBounds(speedText, 0, speedText.length, iconBounds)
+    private val iconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textAlign = Paint.Align.CENTER
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        isFilterBitmap = true
+    }
+    private val iconBounds = Rect()
+    private fun createSpeedIconBitmap(downBytes: Long): Bitmap {
+        val size = 96
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ALPHA_8)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
 
-    if (iconBounds.width() > size - 4) {
-        val ratio = ((size - 4).toFloat() / iconBounds.width()).coerceIn(0.65f, 1.0f)
-        iconPaint.textScaleX = ratio
+        val speedText = formatSpeedShort(downBytes)
+        var textSize = 72f
+        iconPaint.textScaleX = 1.0f
+        iconPaint.textSize = textSize
         iconPaint.getTextBounds(speedText, 0, speedText.length, iconBounds)
-        while (iconBounds.width() > size - 4 && textSize > 32f) {
-            textSize -= 2f
-            iconPaint.textSize = textSize
+
+        if (iconBounds.width() > size - 4) {
+            val ratio = ((size - 4).toFloat() / iconBounds.width()).coerceIn(0.65f, 1.0f)
+            iconPaint.textScaleX = ratio
             iconPaint.getTextBounds(speedText, 0, speedText.length, iconBounds)
+            while (iconBounds.width() > size - 4 && textSize > 32f) {
+                textSize -= 2f
+                iconPaint.textSize = textSize
+                iconPaint.getTextBounds(speedText, 0, speedText.length, iconBounds)
+            }
+        }
+
+        val x = size / 2f
+        val y = size / 2f - iconBounds.exactCenterY()
+        canvas.drawText(speedText, x, y, iconPaint)
+
+        return bitmap
+    }
+
+    private fun formatSpeedShort(bytesPerSec: Long): String {
+        return when (speedUnit) {
+            "Mbps" -> String.format(Locale.US, "%.1f", bytesPerSec * 8.0 / 1_000_000.0)
+            "MBps" -> String.format(Locale.US, "%.1f", bytesPerSec / (1024.0 * 1024.0))
+            else -> String.format(Locale.US, "%.1f", bytesPerSec / 1024.0)
         }
     }
 
-    val x = size / 2f
-    val y = size / 2f - iconBounds.exactCenterY()
-    canvas.drawText(speedText, x, y, iconPaint)
-
-    return bitmap
-}
-
-private fun formatSpeedShort(bytesPerSec: Long): String {
-    return when (speedUnit) {
-        "Mbps" -> String.format(Locale.US, "%.1f", bytesPerSec * 8.0 / 1_000_000.0)
-        "MBps" -> String.format(Locale.US, "%.1f", bytesPerSec / (1024.0 * 1024.0))
-        else -> String.format(Locale.US, "%.1f", bytesPerSec / 1024.0)
+    private fun formatSpeed(bytesPerSec: Long): String {
+        return when (speedUnit) {
+            "Mbps" -> String.format(Locale.US, "%.1f Mbps", bytesPerSec * 8.0 / 1_000_000.0)
+            "MBps" -> String.format(Locale.US, "%.2f MB/s", bytesPerSec / (1024.0 * 1024.0))
+            else -> String.format(Locale.US, "%.1f KB/s", bytesPerSec / 1024.0)
+        }
     }
-}
-
-private fun formatSpeed(bytesPerSec: Long): String {
-    return when (speedUnit) {
-        "Mbps" -> String.format(Locale.US, "%.1f Mbps", bytesPerSec * 8.0 / 1_000_000.0)
-        "MBps" -> String.format(Locale.US, "%.2f MB/s", bytesPerSec / (1024.0 * 1024.0))
-        else -> String.format(Locale.US, "%.1f KB/s", bytesPerSec / 1024.0)
-    }
-}
 
 // Fix notif gonta-ganti: tiap START baru, loop notif lama harus mati
-@Volatile
-private var notifGeneration = 0
+    @Volatile
+    private var notifGeneration = 0
 
 // Anti preset gonta-ganti: tolak START duplikat yang sama dalam 1,5 detik
-private var lastPresetKey = ""
-private var lastPresetTime = 0L
+    private var lastPresetKey = ""
+    private var lastPresetTime = 0L
 
     fun getLocalHotspotIp(): String {
         try {
@@ -164,7 +167,7 @@ private var lastPresetTime = 0L
         const val EXTRA_TARGET_PKG = "EXTRA_TARGET_PKG"
         const val EXTRA_SPEED_UNIT = "EXTRA_SPEED_UNIT"
         private const val CHANNEL_ID = "throttle_channel_v2"
-                private const val NOTIF_ID = 1
+        private const val NOTIF_ID = 1
     }
 
     private class TcpSession(
@@ -176,7 +179,7 @@ private var lastPresetTime = 0L
         @Volatile var clientSeq: Long,
         @Volatile var serverSeq: Long,
         val socket: Socket = Socket(),
-        val writeExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+        val writeExecutor: ExecutorService = Executors.newSingleThreadExecutor(),
     ) {
         val seqLock = Any()
 
@@ -204,7 +207,7 @@ private var lastPresetTime = 0L
         val clientPort: Int,
         val serverPort: Int,
         val socket: DatagramSocket,
-        val sendExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+        val sendExecutor: ExecutorService = Executors.newSingleThreadExecutor(),
     ) {
         @Volatile
         var closed = false
@@ -221,14 +224,14 @@ private var lastPresetTime = 0L
     }
 
     // rateBps <= 0 = tanpa limit. Batasi burst maksimal 0.25 detik biar nggak jebol di awal.
-private class TokenBucket(private val rateBps: Long) {
-    // RAPET: burst cuma 50ms, awal 0, biar gak ada gratis di awal
-    private val maxBurst: Double = if (rateBps > 0) {
-        (rateBps * 0.02).coerceIn(512.0, 4096.0)
-    } else {
-        0.0
-    }
-    private var tokens: Double = 0.0
+    private class TokenBucket(private val rateBps: Long) {
+        // RAPET: burst cuma 50ms, awal 0, biar gak ada gratis di awal
+        private val maxBurst: Double = if (rateBps > 0) {
+            (rateBps * 0.02).coerceIn(512.0, 4096.0)
+        } else {
+            0.0
+        }
+        private var tokens: Double = 0.0
         private var lastRefillNanos: Long = System.nanoTime()
         private val lock = Any()
 
@@ -272,13 +275,13 @@ private class TokenBucket(private val rateBps: Long) {
                 val targetPkg = intent.getStringExtra(EXTRA_TARGET_PKG)
                 speedUnit = intent.getStringExtra(EXTRA_SPEED_UNIT) ?: "KB/s"
                 // Debounce preset - jangan restart kalau presetnya sama persis
-val presetKey = "$name|$sub|$downBps|$upBps|$latencyMs|$hotspotMode|$targetPkg"
-val nowMs = System.currentTimeMillis()
-if (presetKey == lastPresetKey && nowMs - lastPresetTime < 1500) {
-    return START_STICKY
-}
-lastPresetKey = presetKey
-lastPresetTime = nowMs
+                val presetKey = "$name|$sub|$downBps|$upBps|$latencyMs|$hotspotMode|$targetPkg"
+                val nowMs = System.currentTimeMillis()
+                if (presetKey == lastPresetKey && nowMs - lastPresetTime < 1500) {
+                    return START_STICKY
+                }
+                lastPresetKey = presetKey
+                lastPresetTime = nowMs
 
                 try {
                     ensureExecutor()
@@ -306,18 +309,17 @@ lastPresetTime = nowMs
         return START_NOT_STICKY
     }
     private fun buildNotification(profileName: String, trafficText: String, downBytes: Long) =
-    NotificationCompat.Builder(this, CHANNEL_ID)
-        .setContentTitle("Preset: $profileName")
-        .setContentText(trafficText)
-        .setSmallIcon(IconCompat.createWithBitmap(createSpeedIconBitmap(downBytes)))
-
+        NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Preset: $profileName")
+            .setContentText(trafficText)
+            .setSmallIcon(IconCompat.createWithBitmap(createSpeedIconBitmap(downBytes)))
             .setContentIntent(
                 PendingIntent.getActivity(
                     this,
                     0,
                     Intent(this, MainActivity::class.java),
-                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-                )
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                ),
             )
             .setOnlyAlertOnce(true)
             .setOngoing(true)
@@ -351,7 +353,7 @@ lastPresetTime = nowMs
         downBps: Long,
         upBps: Long,
         latencyMs: Long,
-        targetPkg: String?
+        targetPkg: String?,
     ) {
         stopHotspotProxyInternal()
         closeAllSessions()
@@ -368,9 +370,9 @@ lastPresetTime = nowMs
         createNotificationChannel()
         startForeground(
             NOTIF_ID,
-            buildNotification(profileName, "↓ ${formatSpeed(0)}  •  ↑ ${formatSpeed(0)} ($profileSub)", 0L)
+            buildNotification(profileName, "↓ ${formatSpeed(0)}  •  ↑ ${formatSpeed(0)} ($profileSub)", 0L),
         )
-        
+
         val builder = Builder()
             .setSession("NetThrottler")
             .addAddress("10.0.0.2", 32)
@@ -405,18 +407,18 @@ lastPresetTime = nowMs
             runPacketLoop(vpnInterface!!, upBucket, downBucket, latencyMs)
         }
 
-val myGen = ++notifGeneration
-globalExecutor.execute {
-    runNotificationStatsLoop(profileName, profileSub, myGen)
-}
+        val myGen = ++notifGeneration
+        globalExecutor.execute {
+            runNotificationStatsLoop(profileName, profileSub, myGen)
+        }
     }
 
-private fun runNotificationStatsLoop(profileName: String, profileSub: String, gen: Int) {
-    val nm = getSystemService(NotificationManager::class.java)
-    while (isRunning && gen == notifGeneration) {
-        try {
-            Thread.sleep(1000)
-            if (!isRunning || gen != notifGeneration) break
+    private fun runNotificationStatsLoop(profileName: String, profileSub: String, gen: Int) {
+        val nm = getSystemService(NotificationManager::class.java)
+        while (isRunning && gen == notifGeneration) {
+            try {
+                Thread.sleep(1000)
+                if (!isRunning || gen != notifGeneration) break
                 val downBytes = downBytesCounter.getAndSet(0L)
                 val upBytes = upBytesCounter.getAndSet(0L)
                 val downKBs = downBytes / 1024.0
@@ -434,7 +436,7 @@ private fun runNotificationStatsLoop(profileName: String, profileSub: String, ge
         pfd: ParcelFileDescriptor,
         upBucket: TokenBucket,
         downBucket: TokenBucket,
-        latencyMs: Long
+        latencyMs: Long,
     ) {
         val input = FileInputStream(pfd.fileDescriptor)
         val output = FileOutputStream(pfd.fileDescriptor)
@@ -470,7 +472,7 @@ private fun runNotificationStatsLoop(profileName: String, profileSub: String, ge
         vpnOut: FileOutputStream,
         upBucket: TokenBucket,
         downBucket: TokenBucket,
-        latencyMs: Long
+        latencyMs: Long,
     ) {
         if (length < ihl + 20) return
 
@@ -506,7 +508,7 @@ private fun runNotificationStatsLoop(profileName: String, profileSub: String, ge
                 clientPort = srcPort,
                 serverPort = dstPort,
                 clientSeq = (seqNum + 1) and 0xFFFFFFFFL,
-                serverSeq = initialServerSeq
+                serverSeq = initialServerSeq,
             )
             tcpSessions[key] = session
 
@@ -529,7 +531,7 @@ private fun runNotificationStatsLoop(profileName: String, profileSub: String, ge
                             ack = session.clientSeq,
                             flags = 0x12,
                             payload = ByteArray(0),
-                            includeMss = true
+                            includeMss = true,
                         )
                         session.serverSeq = (session.serverSeq + 1) and 0xFFFFFFFFL
                         writeToVpn(vpnOut, synAck)
@@ -548,7 +550,7 @@ private fun runNotificationStatsLoop(profileName: String, profileSub: String, ge
                             seq = session.serverSeq,
                             ack = session.clientSeq,
                             flags = 0x14,
-                            payload = ByteArray(0)
+                            payload = ByteArray(0),
                         )
                         writeToVpn(vpnOut, rst)
                     }
@@ -586,7 +588,7 @@ private fun runNotificationStatsLoop(profileName: String, profileSub: String, ge
                             seq = session.serverSeq,
                             ack = session.clientSeq,
                             flags = 0x10,
-                            payload = ByteArray(0)
+                            payload = ByteArray(0),
                         )
                         writeToVpn(vpnOut, ackPkt)
                     }
@@ -613,7 +615,7 @@ private fun runNotificationStatsLoop(profileName: String, profileSub: String, ge
                             seq = session.serverSeq,
                             ack = session.clientSeq,
                             flags = 0x11,
-                            payload = ByteArray(0)
+                            payload = ByteArray(0),
                         )
                         session.serverSeq = (session.serverSeq + 1) and 0xFFFFFFFFL
                         writeToVpn(vpnOut, finAck)
@@ -630,7 +632,7 @@ private fun runNotificationStatsLoop(profileName: String, profileSub: String, ge
         session: TcpSession,
         vpnOut: FileOutputStream,
         downBucket: TokenBucket,
-        latencyMs: Long
+        latencyMs: Long,
     ) {
         val readBuf = ByteArray(1360)
         try {
@@ -647,7 +649,7 @@ private fun runNotificationStatsLoop(profileName: String, profileSub: String, ge
                             seq = session.serverSeq,
                             ack = session.clientSeq,
                             flags = 0x11,
-                            payload = ByteArray(0)
+                            payload = ByteArray(0),
                         )
                         session.serverSeq = (session.serverSeq + 1) and 0xFFFFFFFFL
                         writeToVpn(vpnOut, finPkt)
@@ -669,7 +671,7 @@ private fun runNotificationStatsLoop(profileName: String, profileSub: String, ge
                             seq = session.serverSeq,
                             ack = session.clientSeq,
                             flags = 0x18,
-                            payload = chunk
+                            payload = chunk,
                         )
                         session.serverSeq = (session.serverSeq + n) and 0xFFFFFFFFL
                         writeToVpn(vpnOut, dataPkt)
@@ -688,7 +690,7 @@ private fun runNotificationStatsLoop(profileName: String, profileSub: String, ge
         profileSub: String,
         downBps: Long,
         upBps: Long,
-        latencyMs: Long
+        latencyMs: Long,
     ) {
         isHotspotProxyActive = false
         isRunning = false
@@ -697,7 +699,11 @@ private fun runNotificationStatsLoop(profileName: String, profileSub: String, ge
         } catch (_: Exception) {
         }
         proxyServerSocket = null
-        proxyClients.toList().forEach { try { it.close() } catch (_: Exception) {} }
+        proxyClients.toList().forEach {
+            try {
+                it.close()
+            } catch (_: Exception) {}
+        }
         proxyClients.clear()
         closeAllSessions()
         try {
@@ -714,7 +720,7 @@ private fun runNotificationStatsLoop(profileName: String, profileSub: String, ge
         val activeIp = getLocalHotspotIp()
         startForeground(
             NOTIF_ID,
-            buildNotification(profileName, "Proxy $activeIp:$PROXY_PORT • ↓ 0.0 KB/s • ↑ 0.0 KB/s ($profileSub)", 0L)
+            buildNotification(profileName, "Proxy $activeIp:$PROXY_PORT • ↓ 0.0 KB/s • ↑ 0.0 KB/s ($profileSub)", 0L),
         )
 
         isHotspotProxyActive = true
@@ -744,12 +750,16 @@ private fun runNotificationStatsLoop(profileName: String, profileSub: String, ge
                                 try {
                                     handleProxyClient(clientSock, upBucket, downBucket, latencyMs)
                                 } catch (t: Throwable) {
-                                    try { clientSock.close() } catch (_: Exception) {}
+                                    try {
+                                        clientSock.close()
+                                    } catch (_: Exception) {}
                                 }
                             }
                         } catch (t: Throwable) {
                             // RejectedExecutionException dll -> tutup socket klien ini saja
-                            try { clientSock.close() } catch (_: Exception) {}
+                            try {
+                                clientSock.close()
+                            } catch (_: Exception) {}
                         }
                     } catch (e: java.net.SocketException) {
                         // ServerSocket ditutup dari stopHotspotProxyInternal -> keluar loop dengan tenang
@@ -762,13 +772,13 @@ private fun runNotificationStatsLoop(profileName: String, profileSub: String, ge
                 e.printStackTrace()
             }
         }
-val myGenHotspot = ++notifGeneration
-globalExecutor.execute {
-    val nm = getSystemService(NotificationManager::class.java)
-    while (isRunning && isHotspotProxyActive && myGenHotspot == notifGeneration) {
-        try {
-            Thread.sleep(1000)
-            if (!isRunning || !isHotspotProxyActive || myGenHotspot != notifGeneration) break
+        val myGenHotspot = ++notifGeneration
+        globalExecutor.execute {
+            val nm = getSystemService(NotificationManager::class.java)
+            while (isRunning && isHotspotProxyActive && myGenHotspot == notifGeneration) {
+                try {
+                    Thread.sleep(1000)
+                    if (!isRunning || !isHotspotProxyActive || myGenHotspot != notifGeneration) break
                     val dBytes = downBytesCounter.getAndSet(0L)
                     val uBytes = upBytesCounter.getAndSet(0L)
                     val dKBs = dBytes / 1024.0
@@ -790,7 +800,11 @@ globalExecutor.execute {
         } catch (_: Exception) {
         }
         proxyServerSocket = null
-        proxyClients.toList().forEach { try { it.close() } catch (_: Exception) {} }
+        proxyClients.toList().forEach {
+            try {
+                it.close()
+            } catch (_: Exception) {}
+        }
         proxyClients.clear()
     }
 
@@ -798,7 +812,7 @@ globalExecutor.execute {
         client: Socket,
         upBucket: TokenBucket,
         downBucket: TokenBucket,
-        latencyMs: Long
+        latencyMs: Long,
     ) {
         proxyClients.add(client)
         // FIX UTAMA crash 4 detik random:
@@ -883,9 +897,15 @@ globalExecutor.execute {
 
                     val remote = Socket()
                     try {
-                        try { protect(remote) } catch (_: Exception) {}
-                        try { remote.soTimeout = 30_000 } catch (_: Exception) {}
-                        try { remote.tcpNoDelay = true } catch (_: Exception) {}
+                        try {
+                            protect(remote)
+                        } catch (_: Exception) {}
+                        try {
+                            remote.soTimeout = 30_000
+                        } catch (_: Exception) {}
+                        try {
+                            remote.tcpNoDelay = true
+                        } catch (_: Exception) {}
                         remote.connect(InetSocketAddress(host, port), 10_000)
                         if (latencyMs > 0) Thread.sleep(latencyMs)
                         try {
@@ -902,7 +922,9 @@ globalExecutor.execute {
                             out.flush()
                         } catch (_: Exception) {}
                     } finally {
-                        try { remote.close() } catch (_: Exception) {}
+                        try {
+                            remote.close()
+                        } catch (_: Exception) {}
                     }
                 } else {
                     val uri: URI
@@ -939,9 +961,15 @@ globalExecutor.execute {
                     }
                     val remote = Socket()
                     try {
-                        try { protect(remote) } catch (_: Exception) {}
-                        try { remote.soTimeout = 30_000 } catch (_: Exception) {}
-                        try { remote.tcpNoDelay = true } catch (_: Exception) {}
+                        try {
+                            protect(remote)
+                        } catch (_: Exception) {}
+                        try {
+                            remote.soTimeout = 30_000
+                        } catch (_: Exception) {}
+                        try {
+                            remote.tcpNoDelay = true
+                        } catch (_: Exception) {}
                         remote.connect(InetSocketAddress(host, port), 10_000)
                         if (latencyMs > 0) Thread.sleep(latencyMs)
                         val sb = StringBuilder("$method $path HTTP/1.1\r\n")
@@ -963,7 +991,9 @@ globalExecutor.execute {
                             out.flush()
                         } catch (_: Exception) {}
                     } finally {
-                        try { remote.close() } catch (_: Exception) {}
+                        try {
+                            remote.close()
+                        } catch (_: Exception) {}
                     }
                 }
             }
@@ -971,7 +1001,9 @@ globalExecutor.execute {
             // Jaring pengaman terakhir: jangan pernah lempar ke Executor thread
         } finally {
             proxyClients.remove(client)
-            try { client.close() } catch (_: Exception) {}
+            try {
+                client.close()
+            } catch (_: Exception) {}
         }
     }
 
@@ -981,7 +1013,7 @@ globalExecutor.execute {
         remote: Socket,
         upBucket: TokenBucket,
         downBucket: TokenBucket,
-        latencyMs: Long
+        latencyMs: Long,
     ) {
         val remoteIn = remote.getInputStream()
         val remoteOut = remote.getOutputStream()
@@ -1016,7 +1048,9 @@ globalExecutor.execute {
         } catch (_: Exception) {
         } finally {
             upTask.cancel(true)
-            try { remote.close() } catch (_: Exception) {}
+            try {
+                remote.close()
+            } catch (_: Exception) {}
         }
     }
 
@@ -1047,7 +1081,7 @@ globalExecutor.execute {
         vpnOut: FileOutputStream,
         upBucket: TokenBucket,
         downBucket: TokenBucket,
-        latencyMs: Long
+        latencyMs: Long,
     ) {
         if (length <= ihl + 8) return
 
@@ -1087,7 +1121,7 @@ globalExecutor.execute {
                                     dstIp = newSession.clientIp,
                                     srcPort = newSession.serverPort,
                                     dstPort = newSession.clientPort,
-                                    payload = respBuf.copyOfRange(0, respPacket.length)
+                                    payload = respBuf.copyOfRange(0, respPacket.length),
                                 )
                                 writeToVpn(vpnOut, ipPacket)
                             }
@@ -1129,7 +1163,7 @@ globalExecutor.execute {
         ack: Long,
         flags: Int,
         payload: ByteArray,
-        includeMss: Boolean = false
+        includeMss: Boolean = false,
     ): ByteArray {
         val optionsLen = if (includeMss) 4 else 0
         val tcpHeaderLen = 20 + optionsLen
@@ -1176,7 +1210,7 @@ globalExecutor.execute {
         dstIp: ByteArray,
         srcPort: Int,
         dstPort: Int,
-        payload: ByteArray
+        payload: ByteArray,
     ): ByteArray {
         val udpLen = 8 + payload.size
         val totalLen = 20 + udpLen
@@ -1225,7 +1259,7 @@ globalExecutor.execute {
         protocol: Int,
         packet: ByteArray,
         transportOffset: Int,
-        transportLen: Int
+        transportLen: Int,
     ): Short {
         var sum = 0
         sum += ((srcIp[0].toInt() and 0xFF) shl 8) or (srcIp[1].toInt() and 0xFF)
@@ -1293,7 +1327,7 @@ globalExecutor.execute {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "Network Throttler",
-                NotificationManager.IMPORTANCE_DEFAULT
+                NotificationManager.IMPORTANCE_DEFAULT,
             ).apply {
                 setSound(null, null)
                 enableVibration(false)

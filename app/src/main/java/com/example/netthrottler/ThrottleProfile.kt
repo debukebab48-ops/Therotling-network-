@@ -12,7 +12,7 @@ data class ThrottleProfile(
     val downloadBps: Long,
     val uploadBps: Long,
     val latencyMs: Long = 0L,
-    val isCustom: Boolean = false
+    val isCustom: Boolean = false,
 )
 
 object Presets {
@@ -25,7 +25,7 @@ object Presets {
         ThrottleProfile("good_3g", "Good 3G", "1.5 Mbps / 750 kbps • 40ms", 1500 * 1024L / 8, 750 * 1024L / 8, 40, false),
         ThrottleProfile("reg_4g", "Regular 4G/LTE", "4 Mbps / 3 Mbps • 20ms", 4000 * 1024L / 8, 3000 * 1024L / 8, 20, false),
         ThrottleProfile("wifi", "Wi-Fi", "30 Mbps / 15 Mbps • 2ms", 30000 * 1024L / 8, 15000 * 1024L / 8, 2, false),
-        ThrottleProfile("dns", "High Latency DNS", "No Limit • 500ms Delay", 0, 0, 500, false)
+        ThrottleProfile("dns", "High Latency DNS", "No Limit • 500ms Delay", 0, 0, 500, false),
     )
 
     fun createCustom(
@@ -33,11 +33,11 @@ object Presets {
         downKbps: Long,
         upKbps: Long,
         latencyMs: Long,
-        existingId: String? = null
+        existingId: String? = null,
     ): ThrottleProfile {
         val cleanName = name.trim().ifEmpty { "Custom Limit" }
-        val downStr = if (downKbps <= 0) "No Limit" else "${downKbps} kbps"
-        val upStr = if (upKbps <= 0) "No Limit" else "${upKbps} kbps"
+        val downStr = if (downKbps <= 0) "No Limit" else "$downKbps kbps"
+        val upStr = if (upKbps <= 0) "No Limit" else "$upKbps kbps"
         return ThrottleProfile(
             id = existingId ?: "custom_${UUID.randomUUID()}",
             name = cleanName,
@@ -45,7 +45,7 @@ object Presets {
             downloadBps = if (downKbps <= 0) 0L else (downKbps * 1024L) / 8L,
             uploadBps = if (upKbps <= 0) 0L else (upKbps * 1024L) / 8L,
             latencyMs = latencyMs.coerceAtLeast(0L),
-            isCustom = true
+            isCustom = true,
         )
     }
 
