@@ -14,6 +14,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import android.graphics.drawable.BitmapDrawable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -557,7 +561,7 @@ fun ThrottlerScreen() {
             if (searchQuery.isBlank()) {
                 apps
             } else {
-                val q = searchQuery.trim().lowercase()
+val q = searchQuery.trim().lowercase()
                 // Hanya cari berdasarkan nama aplikasi, abaikan package name
                 apps.filter { (pkg, name) ->
                     name.lowercase().contains(q)
@@ -602,7 +606,7 @@ fun ThrottlerScreen() {
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         items(filteredApps) { (pkg, name) ->
-                            Column(
+                            Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .border(1.dp, ClassicBorder, RoundedCornerShape(4.dp))
@@ -614,9 +618,19 @@ fun ThrottlerScreen() {
                                         if (isRunning) startOrRestartVpn()
                                     }
                                     .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Text(text = name, color = ClassicTextPrimary, fontSize = 14.sp)
+                                val bitmap = (icon as? BitmapDrawable)?.bitmap?.asImageBitmap()
+                                if (bitmap != null) {
+                                    Image(bitmap = bitmap, contentDescription = null, modifier = Modifier.size(28.dp).clip(RoundedCornerShape(6.dp)))
+                                } else {
+                                    Icon(imageVector = Icons.Default.Apps, contentDescription = null, tint = ClassicTextSecondary, modifier = Modifier.size(28.dp))
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                Text(text = name, color = ClassicTextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                                 Text(text = pkg, color = ClassicTextSecondary, fontSize = 11.sp)
+                                }
                             }
                         }
                     }
