@@ -68,10 +68,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun ThrottlerScreen() {
     val context = LocalContext.current
-
-    var customProfiles by remember {
-        mutableStateOf(Presets.loadCustomProfiles(context))
-    }
+    var customProfiles by remember { mutableStateOf(Presets.loadCustomProfiles(context)) }
     var selectedProfile by remember { mutableStateOf(Presets.list[0]) }
     var speedUnit by remember { mutableStateOf("KB/s") }
     var lastPresetClickMs by remember { mutableStateOf(0L) }
@@ -82,7 +79,6 @@ fun ThrottlerScreen() {
     var selectedAppName by remember { mutableStateOf("Global Mode") }
     var isHotspotMode by remember { mutableStateOf(false) }
     var hotspotIp by remember { mutableStateOf("") }
-
     var showModeMenu by remember { mutableStateOf(false) }
     var showAppPicker by remember { mutableStateOf(false) }
 
@@ -195,7 +191,6 @@ fun ThrottlerScreen() {
                                     tint = ClassicTextSecondary
                                 )
                             }
-
                             DropdownMenu(
                                 expanded = showModeMenu,
                                 onDismissRequest = { showModeMenu = false },
@@ -213,18 +208,43 @@ fun ThrottlerScreen() {
                                     }
                                 )
                                 HorizontalDivider(color = ClassicBorder)
+                                
+                                // --- BARIS YANG DIPERBAIKI (Dipecah agar < 120 karakter) ---
                                 DropdownMenuItem(
-                                    text = { Text(if (speedUnit == "KB/s") "Satuan: KB/s ✓" else "Satuan: KB/s", color = ClassicTextPrimary) },
-                                    onClick = { speedUnit = "KB/s"; showModeMenu = false; if (isRunning) startOrRestartVpn() }
+                                    text = {
+                                        val label = if (speedUnit == "KB/s") "Satuan: KB/s ✓" else "Satuan: KB/s"
+                                        Text(label, color = ClassicTextPrimary)
+                                    },
+                                    onClick = {
+                                        speedUnit = "KB/s"
+                                        showModeMenu = false
+                                        if (isRunning) startOrRestartVpn()
+                                    }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text(if (speedUnit == "Mbps") "Satuan: Mbps ✓" else "Satuan: Mbps", color = ClassicTextPrimary) },
-                                    onClick = { speedUnit = "Mbps"; showModeMenu = false; if (isRunning) startOrRestartVpn() }
+                                    text = {
+                                        val label = if (speedUnit == "Mbps") "Satuan: Mbps ✓" else "Satuan: Mbps"
+                                        Text(label, color = ClassicTextPrimary)
+                                    },
+                                    onClick = {
+                                        speedUnit = "Mbps"
+                                        showModeMenu = false
+                                        if (isRunning) startOrRestartVpn()
+                                    }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text(if (speedUnit == "MBps") "Satuan: MB/s ✓" else "Satuan: MB/s", color = ClassicTextPrimary) },
-                                    onClick = { speedUnit = "MBps"; showModeMenu = false; if (isRunning) startOrRestartVpn() }
+                                    text = {
+                                        val label = if (speedUnit == "MBps") "Satuan: MB/s ✓" else "Satuan: MB/s"
+                                        Text(label, color = ClassicTextPrimary)
+                                    },
+                                    onClick = {
+                                        speedUnit = "MBps"
+                                        showModeMenu = false
+                                        if (isRunning) startOrRestartVpn()
+                                    }
                                 )
+                                // ----------------------------------------------------------------
+                                
                                 HorizontalDivider(color = ClassicBorder)
                                 DropdownMenuItem(
                                     text = { Text("Pilih Aplikasi Target...", color = ClassicTextPrimary) },
@@ -251,7 +271,6 @@ fun ThrottlerScreen() {
                         }
                     }
                 )
-
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -286,7 +305,6 @@ fun ThrottlerScreen() {
                         color = ClassicTextSecondary
                     )
                 }
-
                 if (isHotspotMode) {
                     val ipDisplay = hotspotIp.ifBlank { ThrottleVpnService().getLocalHotspotIp() }
                     Text(
@@ -362,26 +380,30 @@ fun ThrottlerScreen() {
                             shape = RoundedCornerShape(6.dp)
                         )
                         .clickable {
-    val now = System.currentTimeMillis()
-    // Tolak tap ganda / ke-tap pas scroll, kalau di bawah 800ms abaikan
-    if (now - lastPresetClickMs < 800) return@clickable
-    // Kalau presetnya sama dan udah jalan, jangan restart lagi
-    if (profile.id == selectedProfile.id && isRunning) return@clickable
-    lastPresetClickMs = now
-    selectedProfile = profile
-    if (isRunning) {
-        startOrRestartVpn(profile)
-    }
-}
+                            val now = System.currentTimeMillis()
+                            if (now - lastPresetClickMs < 800) return@clickable
+                            if (profile.id == selectedProfile.id && isRunning) return@clickable
+                            lastPresetClickMs = now
+                            selectedProfile = profile
+                            if (isRunning) {
+                                startOrRestartVpn(profile)
+                            }
+                        }
                         .padding(start = 14.dp, end = 6.dp, top = 11.dp, bottom = 11.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // --- BARIS YANG DIPERBAIKI (Dipecah agar < 120 karakter) ---
                     Icon(
-                        imageVector = if (isSelected) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked,
+                        imageVector = if (isSelected) {
+                            Icons.Default.RadioButtonChecked
+                        } else {
+                            Icons.Default.RadioButtonUnchecked
+                        },
                         contentDescription = null,
                         tint = if (isSelected) ClassicAccent else ClassicTextSecondary,
                         modifier = Modifier.size(20.dp)
                     )
+                    // ----------------------------------------------------------------
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
@@ -427,7 +449,6 @@ fun ThrottlerScreen() {
         var latencyInput by remember(target) {
             mutableStateOf(target.latencyMs.toString())
         }
-
         AlertDialog(
             onDismissRequest = { editingProfile = null },
             containerColor = ClassicSurface,
@@ -536,7 +557,12 @@ fun ThrottlerScreen() {
         val pm = context.packageManager
         val apps = remember {
             pm.getInstalledApplications(0)
-                .filter { (it.flags and ApplicationInfo.FLAG_SYSTEM) == 0 && it.packageName != context.packageName }
+                // --- BARIS YANG DIPERBAIKI (Dipecah agar < 120 karakter) ---
+                .filter {
+                    (it.flags and ApplicationInfo.FLAG_SYSTEM) == 0 &&
+                        it.packageName != context.packageName
+                }
+                // ----------------------------------------------------------------
                 .map { it.packageName to pm.getApplicationLabel(it).toString() }
                 .sortedBy { it.second.lowercase() }
         }
@@ -551,7 +577,6 @@ fun ThrottlerScreen() {
                 }
             }
         }
-
         AlertDialog(
             onDismissRequest = { showAppPicker = false },
             containerColor = ClassicSurface,
@@ -583,7 +608,6 @@ fun ThrottlerScreen() {
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
-
                     LazyColumn(
                         modifier = Modifier.height(320.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
