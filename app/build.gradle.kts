@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("com.diffplug.spotless")
 }
 
 android {
@@ -53,4 +54,16 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+}
+
+spotless {
+    kotlin {
+        target("**/*.kt")
+        ktlint("1.1.0")
+            .editorConfigOverride(mapOf("indent_size" to "4", "max_line_length" to "120"))
+    }
+    kotlinGradle {
+        target("**/*.kts")
+        ktlint("1.1.0")
+    }
 }
