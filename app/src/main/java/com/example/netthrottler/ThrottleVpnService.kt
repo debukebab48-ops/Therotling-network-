@@ -1,14 +1,14 @@
 package com.example.netthrottler
 
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
-import android.content.Intent
-import android.net.VpnService
-import android.os.Build
-import android.os.ParcelFileDescriptor
-import android.os.PowerManager
 import androidx.core.app.NotificationCompat
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Icon
+import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.Rect
+import android.graphics.Typeface
 import java.io.BufferedInputStream
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -59,12 +59,38 @@ private var isRunning = false
 @Volatile
 private var speedUnit = "KB/s"
 
-private fun formatSpeed(bytesPerSec: Long): String {
+private val iconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    color = Color.WHITE
+    textAlign = Paint.Align.CENTER
+    typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+}
+private val iconBounds = Rect()
+
+private fun createSpeedIconBitmap(downBytes: Long): Bitmap {
+    val size = 48
+    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+
+    val shortText = "↓" + formatSpeedShort(downBytes)
+    iconPaint.textSize = size * 0.65f
+    iconPaint.getTextBounds(shortText, 0, shortText.length, iconBounds)
+    val x = size / 2f
+    val y = size / 2f - iconBounds.exactCenterY()
+
+    canvas.drawText(shortText, x, y, iconPaint)
+    return bitmap
+}
+
+private fun formatSpeedShort(bytesPerSec: Long): String {
     return when (speedUnit) {
-        "Mbps" -> String.format(Locale.US, "%.2f Mbps", bytesPerSec * 8.0 / 1_000_000.0)
-        "MBps" -> String.format(Locale.US, "%.2f MB/s", bytesPerSec / (1024.0 * 1024.0))
-        else -> String.format(Locale.US, "%.1f KB/s", bytesPerSec / 1024.0)
+        "Mbps" -> String.format(Locale.US, "%.1f", bytesPerSec * 8.0 / 1_000_000.0)
+        "MBps" -> String.format(Locale.US, "%.1f", bytesPerSec / (1024.0 * 1024.0))
+        else -> String.format(Locale.US, "%.1f", bytesPerSec / 1024.0)
     }
+}
+
+private fun formatSpeed(bytesPerSec: Long): String {
 }
 
 // Fix notif gonta-ganti: tiap START baru, loop notif lama harus mati
@@ -239,7 +265,7 @@ lastPresetTime = nowMs
                     // Jangan crash: service tetap jalan sebagai foreground dengan notif error, biar user bisa STOP
                     try {
                         createNotificationChannel()
-                        startForeground(NOTIF_ID, buildNotification(name, "Gagal start: " + (e.message ?: "unknown"), false))
+                        startForeground(NOTIF_ID, buildNotification(name, "Gagal start: " + (e.message ?: "unknown"), 0L))
                     } catch (_: Exception) {}
                 }
                 return START_STICKY
@@ -253,11 +279,11 @@ lastPresetTime = nowMs
         return START_NOT_STICKY
     }
 
-    private fun buildNotification(profileName: String, trafficText: String, hasTraffic: Boolean) =
-        NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Preset: $profileName")
-            .setContentText(trafficText)
-            .setSmallIcon(if (hasTraffic) R.drawable.ic_notif_active else R.drawable.ic_notif_idle)
+    private fun buildNotification(profileName: String, trafficText: String, downBytes: Long) =
+    NotificationCompat.Builder(this, CHANNEL_ID)
+        .setContentTitle("Preset: $profileName")
+        .setContentText(trafficText)
+        .setSmallIcon(Icon.createWithBitmap(createSpeedIconBitmap(downBytes)))
             .setContentIntent(
                 PendingIntent.getActivity(
                     this,
@@ -315,7 +341,7 @@ lastPresetTime = nowMs
         createNotificationChannel()
         startForeground(
             NOTIF_ID,
-            buildNotification(profileName, "↓ ${formatSpeed(0)}  •  ↑ ${formatSpeed(0)} ($profileSub)", false)
+            buildNotification(profileName, "↓ ${formatSpeed(0)}  •  ↑ ${formatSpeed(0)} ($profileSub)", 0L)
         )
 
         val builder = Builder()
@@ -369,7 +395,7 @@ private fun runNotificationStatsLoop(profileName: String, profileSub: String, ge
                 val downKBs = downBytes / 1024.0
                 val upKBs = upBytes / 1024.0
                 val text = "↓ ${formatSpeed(downBytes)}  •  ↑ ${formatSpeed(upBytes)}  ($profileSub)"
-                nm.notify(NOTIF_ID, buildNotification(profileName, text, (downBytes + upBytes) > 0L))
+                nm.notify(NOTIF_ID, buildNotification(profileName, text, downBytes))
             } catch (_: InterruptedException) {
                 break
             } catch (_: Exception) {
@@ -659,7 +685,7 @@ private fun runNotificationStatsLoop(profileName: String, profileSub: String, ge
         val activeIp = getLocalHotspotIp()
         startForeground(
             NOTIF_ID,
-            buildNotification(profileName, "Proxy $activeIp:$PROXY_PORT • ↓ ${formatSpeed(0)} • ↑ ${formatSpeed(0)} ($profileSub)", false)
+            buildNotification(profileName, "Proxy $activeIp:$PROXY_PORT • ↓ 0.0 KB/s • ↑ 0.0 KB/s ($profileSub)", 0L)
         )
 
         isHotspotProxyActive = true
@@ -719,7 +745,7 @@ globalExecutor.execute {
                     val dKBs = dBytes / 1024.0
                     val uKBs = uBytes / 1024.0
                     val text = "Proxy $activeIp:$PROXY_PORT • ↓ ${formatSpeed(dBytes)} • ↑ ${formatSpeed(uBytes)} ($profileSub)"
-                    nm.notify(NOTIF_ID, buildNotification(profileName, text, (dBytes + uBytes) > 0L))
+                    nm.notify(NOTIF_ID, buildNotification(profileName, text, dBytes))
                 } catch (_: InterruptedException) {
                     break
                 } catch (_: Exception) {
