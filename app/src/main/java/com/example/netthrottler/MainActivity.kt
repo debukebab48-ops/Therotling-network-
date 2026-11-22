@@ -557,7 +557,7 @@ fun ThrottlerScreen() {
             if (searchQuery.isBlank()) {
                 apps
             } else {
-val q = searchQuery.trim().lowercase()
+                val q = searchQuery.trim().lowercase()
                 // Hanya cari berdasarkan nama aplikasi, abaikan package name
                 apps.filter { (pkg, name) ->
                     name.lowercase().contains(q)
