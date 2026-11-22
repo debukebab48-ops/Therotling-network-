@@ -1,0 +1,22 @@
+name: Auto Format Spasi
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Jalankan Prettier (Perbaiki Spasi & Inden)
+        uses: creyola/prettier-action@v4.3
+        with:
+          prettier_options: --write .
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
