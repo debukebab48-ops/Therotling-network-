@@ -73,61 +73,32 @@ private val iconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
     isFilterBitmap = true
 }
 private val iconBounds = Rect()
-private val arrowPath = android.graphics.Path()
-
 private fun createSpeedIconBitmap(downBytes: Long): Bitmap {
     val size = 96
     val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ALPHA_8)
     val canvas = Canvas(bitmap)
     canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
 
-    // --- BARIS 1 (ATAS): Panah bawah + Satuan ---
-    val unitLabel = when (speedUnit) {
-        "Mbps" -> "Mbps"
-        "MBps" -> "MB/s"
-        else -> "KB/s"
-    }
-    iconPaint.textScaleX = 1.0f
-    iconPaint.textSize = 20f
-    iconPaint.getTextBounds(unitLabel, 0, unitLabel.length, iconBounds)
-
-    val arrowW = 12f
-    val gap = 4f
-    val totalTopW = arrowW + gap + iconBounds.width()
-    val topCenterY = 17f
-    val startX = (size - totalTopW) / 2f
-
-    arrowPath.reset()
-    arrowPath.moveTo(startX, topCenterY - 5f)
-    arrowPath.lineTo(startX + arrowW, topCenterY - 5f)
-    arrowPath.lineTo(startX + arrowW / 2f, topCenterY + 6f)
-    arrowPath.close()
-    canvas.drawPath(arrowPath, iconPaint)
-
-    val unitX = startX + arrowW + gap + (iconBounds.width() / 2f)
-    val unitY = topCenterY - iconBounds.exactCenterY()
-    canvas.drawText(unitLabel, unitX, unitY, iconPaint)
-
-    // --- BARIS 2 (BAWAH): Angka speed gede & pas ---
     val speedText = formatSpeedShort(downBytes)
-    var bottomSize = 48f
-    iconPaint.textSize = bottomSize
+    var textSize = 72f
+    iconPaint.textScaleX = 1.0f
+    iconPaint.textSize = textSize
     iconPaint.getTextBounds(speedText, 0, speedText.length, iconBounds)
 
     if (iconBounds.width() > size - 4) {
-        val ratio = ((size - 4).toFloat() / iconBounds.width()).coerceIn(0.70f, 1.0f)
+        val ratio = ((size - 4).toFloat() / iconBounds.width()).coerceIn(0.65f, 1.0f)
         iconPaint.textScaleX = ratio
         iconPaint.getTextBounds(speedText, 0, speedText.length, iconBounds)
-        while (iconBounds.width() > size - 4 && bottomSize > 24f) {
-            bottomSize -= 2f
-            iconPaint.textSize = bottomSize
+        while (iconBounds.width() > size - 4 && textSize > 32f) {
+            textSize -= 2f
+            iconPaint.textSize = textSize
             iconPaint.getTextBounds(speedText, 0, speedText.length, iconBounds)
         }
     }
 
-    val bottomCenterY = 67f
-    val numY = bottomCenterY - iconBounds.exactCenterY()
-    canvas.drawText(speedText, size / 2f, numY, iconPaint)
+    val x = size / 2f
+    val y = size / 2f - iconBounds.exactCenterY()
+    canvas.drawText(speedText, x, y, iconPaint)
 
     return bitmap
 }
