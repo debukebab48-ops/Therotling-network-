@@ -557,9 +557,10 @@ fun ThrottlerScreen() {
             if (searchQuery.isBlank()) {
                 apps
             } else {
-                val q = searchQuery.trim().lowercase()
+val q = searchQuery.trim().lowercase()
+                // Hanya cari berdasarkan nama aplikasi, abaikan package name
                 apps.filter { (pkg, name) ->
-                    name.lowercase().contains(q) || pkg.lowercase().contains(q)
+                    name.lowercase().contains(q)
                 }
             }
         }
@@ -573,7 +574,7 @@ fun ThrottlerScreen() {
                     OutlinedTextField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
-                        placeholder = { Text("Cari nama aplikasi...", fontSize = 13.sp, color = ClassicTextSecondary) },
+                        placeholder = { Text("Ketik nama aplikasi (cth: TikTok Lite)...", fontSize = 13.sp, color = ClassicTextSecondary) },
                         leadingIcon = {
                             Icon(
                                 imageVector = Icons.Default.Search,
