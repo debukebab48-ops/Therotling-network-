@@ -54,8 +54,12 @@ class ThrottleVpnService : VpnService() {
     private var isHotspotProxyActive = false
     private var wakeLock: PowerManager.WakeLock? = null
 
-    @Volatile
+@Volatile
 private var isRunning = false
+
+// Fix notif gonta-ganti: tiap START baru, loop notif lama harus mati
+@Volatile
+private var notifGeneration = 0
 
 // Anti preset gonta-ganti: tolak START duplikat yang sama dalam 1,5 detik
 private var lastPresetKey = ""
@@ -336,17 +340,18 @@ lastPresetTime = nowMs
             runPacketLoop(vpnInterface!!, upBucket, downBucket, latencyMs)
         }
 
-        globalExecutor.execute {
-            runNotificationStatsLoop(profileName, profileSub)
-        }
+val myGen = ++notifGeneration
+globalExecutor.execute {
+    runNotificationStatsLoop(profileName, profileSub, myGen)
+}
     }
 
-    private fun runNotificationStatsLoop(profileName: String, profileSub: String) {
-        val nm = getSystemService(NotificationManager::class.java)
-        while (isRunning) {
-            try {
-                Thread.sleep(1000)
-                if (!isRunning) break
+private fun runNotificationStatsLoop(profileName: String, profileSub: String, gen: Int) {
+    val nm = getSystemService(NotificationManager::class.java)
+    while (isRunning && gen == notifGeneration) {
+        try {
+            Thread.sleep(1000)
+            if (!isRunning || gen != notifGeneration) break
                 val downBytes = downBytesCounter.getAndSet(0L)
                 val upBytes = upBytesCounter.getAndSet(0L)
                 val downKBs = downBytes / 1024.0
@@ -696,13 +701,13 @@ lastPresetTime = nowMs
                 e.printStackTrace()
             }
         }
-
-        globalExecutor.execute {
-            val nm = getSystemService(NotificationManager::class.java)
-            while (isRunning && isHotspotProxyActive) {
-                try {
-                    Thread.sleep(1000)
-                    if (!isRunning || !isHotspotProxyActive) break
+val myGenHotspot = ++notifGeneration
+globalExecutor.execute {
+    val nm = getSystemService(NotificationManager::class.java)
+    while (isRunning && isHotspotProxyActive && myGenHotspot == notifGeneration) {
+        try {
+            Thread.sleep(1000)
+            if (!isRunning || !isHotspotProxyActive || myGenHotspot != notifGeneration) break
                     val dBytes = downBytesCounter.getAndSet(0L)
                     val uBytes = upBytesCounter.getAndSet(0L)
                     val dKBs = dBytes / 1024.0
