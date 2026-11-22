@@ -8,8 +8,12 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -27,6 +31,15 @@ jobs:
 
       - name: Check debug keystore exists
         run: test -f app/debug.keystore || (echo "app/debug.keystore hilang, commit dulu file keystore-nya" && exit 1)
+
+      - name: Auto-format with Spotless
+        run: gradle spotlessApply
+
+      - name: Auto-commit format changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "style: auto-format by Spotless [skip ci]"
+          file_pattern: "app/src/**/*.kt app/*.kts *.kts"
 
       - name: Build APK
         run: gradle assembleDebug --build-cache --parallel
