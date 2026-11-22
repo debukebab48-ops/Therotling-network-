@@ -1,10 +1,18 @@
 package com.example.netthrottler
 
 import androidx.core.app.NotificationCompat
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Intent
+import android.net.VpnService
+import android.os.Build
+import android.os.ParcelFileDescriptor
+import android.os.PowerManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.Icon
+import androidx.core.graphics.drawable.IconCompat
 import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.Rect
@@ -91,6 +99,11 @@ private fun formatSpeedShort(bytesPerSec: Long): String {
 }
 
 private fun formatSpeed(bytesPerSec: Long): String {
+    return when (speedUnit) {
+        "Mbps" -> String.format(Locale.US, "%.1f Mbps", bytesPerSec * 8.0 / 1_000_000.0)
+        "MBps" -> String.format(Locale.US, "%.1f MBps", bytesPerSec / (1024.0 * 1024.0))
+        else -> String.format(Locale.US, "%.1f KB/s", bytesPerSec / 1024.0)
+    }
 }
 
 // Fix notif gonta-ganti: tiap START baru, loop notif lama harus mati
@@ -283,7 +296,7 @@ lastPresetTime = nowMs
     NotificationCompat.Builder(this, CHANNEL_ID)
         .setContentTitle("Preset: $profileName")
         .setContentText(trafficText)
-        .setSmallIcon(Icon.createWithBitmap(createSpeedIconBitmap(downBytes)))
+        .setSmallIcon(IconCompat.createWithBitmap(createSpeedIconBitmap(downBytes)))
             .setContentIntent(
                 PendingIntent.getActivity(
                     this,
