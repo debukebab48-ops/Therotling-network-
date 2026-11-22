@@ -57,6 +57,7 @@ class ThrottleVpnService : VpnService() {
     private val downBytesCounter = AtomicLong(0L)
     private val upBytesCounter = AtomicLong(0L)
     private var proxyServerSocket: ServerSocket? = null
+    private val proxyClients = ConcurrentHashMap.newKeySet<Socket>()
     @Volatile
     private var isHotspotProxyActive = false
     private var wakeLock: PowerManager.WakeLock? = null
@@ -696,6 +697,8 @@ private fun runNotificationStatsLoop(profileName: String, profileSub: String, ge
         } catch (_: Exception) {
         }
         proxyServerSocket = null
+        proxyClients.toList().forEach { try { it.close() } catch (_: Exception) {} }
+        proxyClients.clear()
         closeAllSessions()
         try {
             vpnInterface?.close()
@@ -787,6 +790,8 @@ globalExecutor.execute {
         } catch (_: Exception) {
         }
         proxyServerSocket = null
+        proxyClients.toList().forEach { try { it.close() } catch (_: Exception) {} }
+        proxyClients.clear()
     }
 
     private fun handleProxyClient(
@@ -795,6 +800,7 @@ globalExecutor.execute {
         downBucket: TokenBucket,
         latencyMs: Long
     ) {
+        proxyClients.add(client)
         // FIX UTAMA crash 4 detik random:
         // Dulu: remote.connect() ada di try-finally TANPA catch.
         // Kalau DNS gagal / timeout / refused / klien putus duluan, IOException naik ke
@@ -805,7 +811,7 @@ globalExecutor.execute {
                 val input: InputStream
                 val out: OutputStream
                 try {
-                    input = BufferedInputStream(cSock.getInputStream())
+                    input = BufferedInputStream(cSock.getInputStream(), 1024)
                     out = cSock.getOutputStream()
                 } catch (_: Exception) {
                     return
@@ -964,6 +970,7 @@ globalExecutor.execute {
         } catch (t: Throwable) {
             // Jaring pengaman terakhir: jangan pernah lempar ke Executor thread
         } finally {
+            proxyClients.remove(client)
             try { client.close() } catch (_: Exception) {}
         }
     }
