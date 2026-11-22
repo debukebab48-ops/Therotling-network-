@@ -153,13 +153,14 @@ private var lastPresetTime = 0L
     }
 
     // rateBps <= 0 = tanpa limit. Batasi burst maksimal 0.25 detik biar nggak jebol di awal.
-    private class TokenBucket(private val rateBps: Long) {
-        private val maxBurst: Double = if (rateBps > 0) {
-            (rateBps * 0.25).coerceAtLeast(2048.0)
-        } else {
-            0.0
-        }
-        private var tokens: Double = maxBurst
+private class TokenBucket(private val rateBps: Long) {
+    // RAPET: burst cuma 50ms, awal 0, biar gak ada gratis di awal
+    private val maxBurst: Double = if (rateBps > 0) {
+        (rateBps * 0.02).coerceIn(512.0, 4096.0)
+    } else {
+        0.0
+    }
+    private var tokens: Double = 0.0
         private var lastRefillNanos: Long = System.nanoTime()
         private val lock = Any()
 
@@ -924,7 +925,7 @@ lastPresetTime = nowMs
         val remoteOut = remote.getOutputStream()
 
         val upTask = globalExecutor.submit {
-            val buf = ByteArray(2048)
+            val buf = ByteArray(1024)
             try {
                 while (isRunning && isHotspotProxyActive) {
                     val n = clientIn.read(buf)
@@ -939,7 +940,7 @@ lastPresetTime = nowMs
             }
         }
 
-        val bufDown = ByteArray(2048)
+        val bufDown = ByteArray(1024)
         try {
             while (isRunning && isHotspotProxyActive) {
                 val n = remoteIn.read(bufDown)
