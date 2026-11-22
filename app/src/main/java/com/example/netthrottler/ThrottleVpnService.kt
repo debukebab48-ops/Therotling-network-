@@ -70,13 +70,14 @@ private val iconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
     color = Color.WHITE
     textAlign = Paint.Align.CENTER
     typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+    isFilterBitmap = true
 }
 private val iconBounds = Rect()
 private val arrowPath = android.graphics.Path()
 
 private fun createSpeedIconBitmap(downBytes: Long): Bitmap {
     val size = 96
-    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ALPHA_8)
     val canvas = Canvas(bitmap)
     canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
 
@@ -87,20 +88,19 @@ private fun createSpeedIconBitmap(downBytes: Long): Bitmap {
         else -> "KB/s"
     }
     iconPaint.textScaleX = 1.0f
-    iconPaint.textSize = 26f
+    iconPaint.textSize = 20f
     iconPaint.getTextBounds(unitLabel, 0, unitLabel.length, iconBounds)
 
-    val arrowW = 14f
+    val arrowW = 12f
     val gap = 4f
     val totalTopW = arrowW + gap + iconBounds.width()
-    val topCenterY = 21f
+    val topCenterY = 17f
     val startX = (size - totalTopW) / 2f
 
-    // Gambar segitiga panah bawah (presisi, anti kepotong font)
     arrowPath.reset()
-    arrowPath.moveTo(startX, topCenterY - 6f)
-    arrowPath.lineTo(startX + arrowW, topCenterY - 6f)
-    arrowPath.lineTo(startX + arrowW / 2f, topCenterY + 7f)
+    arrowPath.moveTo(startX, topCenterY - 5f)
+    arrowPath.lineTo(startX + arrowW, topCenterY - 5f)
+    arrowPath.lineTo(startX + arrowW / 2f, topCenterY + 6f)
     arrowPath.close()
     canvas.drawPath(arrowPath, iconPaint)
 
@@ -110,13 +110,12 @@ private fun createSpeedIconBitmap(downBytes: Long): Bitmap {
 
     // --- BARIS 2 (BAWAH): Angka speed gede & pas ---
     val speedText = formatSpeedShort(downBytes)
-    var bottomSize = 54f
+    var bottomSize = 48f
     iconPaint.textSize = bottomSize
     iconPaint.getTextBounds(speedText, 0, speedText.length, iconBounds)
 
-    // Kalau digit panjang (misal 1024.5), rampingkan sedikit biar tetap tinggi & muat
     if (iconBounds.width() > size - 4) {
-        val ratio = ((size - 4).toFloat() / iconBounds.width()).coerceIn(0.68f, 1.0f)
+        val ratio = ((size - 4).toFloat() / iconBounds.width()).coerceIn(0.70f, 1.0f)
         iconPaint.textScaleX = ratio
         iconPaint.getTextBounds(speedText, 0, speedText.length, iconBounds)
         while (iconBounds.width() > size - 4 && bottomSize > 24f) {
@@ -126,7 +125,7 @@ private fun createSpeedIconBitmap(downBytes: Long): Bitmap {
         }
     }
 
-    val bottomCenterY = 66f
+    val bottomCenterY = 67f
     val numY = bottomCenterY - iconBounds.exactCenterY()
     canvas.drawText(speedText, size / 2f, numY, iconPaint)
 
