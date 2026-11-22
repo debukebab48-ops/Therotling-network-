@@ -73,6 +73,7 @@ fun ThrottlerScreen() {
         mutableStateOf(Presets.loadCustomProfiles(context))
     }
     var selectedProfile by remember { mutableStateOf(Presets.list[0]) }
+    var speedUnit by remember { mutableStateOf("KB/s") }
     var lastPresetClickMs by remember { mutableStateOf(0L) }
     var editingProfile by remember { mutableStateOf<ThrottleProfile?>(null) }
     var isRunning by remember { mutableStateOf(false) }
@@ -110,6 +111,7 @@ fun ThrottlerScreen() {
             putExtra(ThrottleVpnService.EXTRA_UP_BPS, profile.uploadBps)
             putExtra(ThrottleVpnService.EXTRA_LATENCY_MS, profile.latencyMs)
             putExtra(ThrottleVpnService.EXTRA_HOTSPOT_MODE, isHotspotMode)
+            putExtra(ThrottleVpnService.EXTRA_SPEED_UNIT, speedUnit)
             if (isHotspotMode) {
                 hotspotIp = ThrottleVpnService().getLocalHotspotIp()
             } else if (!isGlobalMode && !selectedAppPkg.isNullOrBlank()) {
@@ -209,6 +211,19 @@ fun ThrottlerScreen() {
                                         showModeMenu = false
                                         if (isRunning) startOrRestartVpn()
                                     }
+HorizontalDivider(color = ClassicBorder)
+DropdownMenuItem(
+    text = { Text(if (speedUnit == "KB/s") "Satuan: KB/s ✓" else "Satuan: KB/s", color = ClassicTextPrimary) },
+    onClick = { speedUnit = "KB/s"; showModeMenu = false; if (isRunning) startOrRestartVpn() }
+)
+DropdownMenuItem(
+    text = { Text(if (speedUnit == "Mbps") "Satuan: Mbps ✓" else "Satuan: Mbps", color = ClassicTextPrimary) },
+    onClick = { speedUnit = "Mbps"; showModeMenu = false; if (isRunning) startOrRestartVpn() }
+)
+DropdownMenuItem(
+    text = { Text(if (speedUnit == "MBps") "Satuan: MB/s ✓" else "Satuan: MB/s", color = ClassicTextPrimary) },
+    onClick = { speedUnit = "MBps"; showModeMenu = false; if (isRunning) startOrRestartVpn() }
+)
                                 )
                                 HorizontalDivider(color = ClassicBorder)
                                 DropdownMenuItem(

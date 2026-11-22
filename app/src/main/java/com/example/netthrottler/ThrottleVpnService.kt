@@ -56,6 +56,16 @@ class ThrottleVpnService : VpnService() {
 
 @Volatile
 private var isRunning = false
+@Volatile
+private var speedUnit = "KB/s"
+
+private fun formatSpeed(bytesPerSec: Long): String {
+    return when (speedUnit) {
+        "Mbps" -> String.format(Locale.US, "%.2f Mbps", bytesPerSec * 8.0 / 1_000_000.0)
+        "MBps" -> String.format(Locale.US, "%.2f MB/s", bytesPerSec / (1024.0 * 1024.0))
+        else -> String.format(Locale.US, "%.1f KB/s", bytesPerSec / 1024.0)
+    }
+}
 
 // Fix notif gonta-ganti: tiap START baru, loop notif lama harus mati
 @Volatile
@@ -99,6 +109,7 @@ private var lastPresetTime = 0L
         const val EXTRA_UP_BPS = "EXTRA_UP_BPS"
         const val EXTRA_LATENCY_MS = "EXTRA_LATENCY_MS"
         const val EXTRA_TARGET_PKG = "EXTRA_TARGET_PKG"
+        const val EXTRA_SPEED_UNIT = "EXTRA_SPEED_UNIT"
         private const val CHANNEL_ID = "throttle_channel"
         private const val NOTIF_ID = 1
     }
@@ -206,6 +217,7 @@ private class TokenBucket(private val rateBps: Long) {
                 val latencyMs = intent.getLongExtra(EXTRA_LATENCY_MS, 0L)
                 val hotspotMode = intent.getBooleanExtra(EXTRA_HOTSPOT_MODE, false)
                 val targetPkg = intent.getStringExtra(EXTRA_TARGET_PKG)
+                speedUnit = intent.getStringExtra(EXTRA_SPEED_UNIT) ?: "KB/s"
                 // Debounce preset - jangan restart kalau presetnya sama persis
 val presetKey = "$name|$sub|$downBps|$upBps|$latencyMs|$hotspotMode|$targetPkg"
 val nowMs = System.currentTimeMillis()
@@ -356,7 +368,7 @@ private fun runNotificationStatsLoop(profileName: String, profileSub: String, ge
                 val upBytes = upBytesCounter.getAndSet(0L)
                 val downKBs = downBytes / 1024.0
                 val upKBs = upBytes / 1024.0
-                val text = String.format(
+                val text = "↓ ${formatSpeed(downBytes)}  •  ↑ ${formatSpeed(upBytes)}  ($profileSub)"
                     Locale.US,
                     "↓ %.1f KB/s  •  ↑ %.1f KB/s  (%s)",
                     downKBs,
@@ -712,7 +724,7 @@ globalExecutor.execute {
                     val uBytes = upBytesCounter.getAndSet(0L)
                     val dKBs = dBytes / 1024.0
                     val uKBs = uBytes / 1024.0
-                    val text = String.format(
+                    val text = "Proxy $activeIp:$PROXY_PORT • ↓ ${formatSpeed(dBytes)} • ↑ ${formatSpeed(uBytes)} ($profileSub)"
                         Locale.US,
                         "Proxy %s:%d • ↓ %.1f KB/s • ↑ %.1f KB/s (%s)",
                         activeIp,
