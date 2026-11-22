@@ -73,6 +73,7 @@ fun ThrottlerScreen() {
         mutableStateOf(Presets.loadCustomProfiles(context))
     }
     var selectedProfile by remember { mutableStateOf(Presets.list[0]) }
+    var lastPresetClickMs by remember { mutableStateOf(0L) }
     var editingProfile by remember { mutableStateOf<ThrottleProfile?>(null) }
     var isRunning by remember { mutableStateOf(false) }
     var isGlobalMode by remember { mutableStateOf(true) }
@@ -346,11 +347,17 @@ fun ThrottlerScreen() {
                             shape = RoundedCornerShape(6.dp)
                         )
                         .clickable {
-                            selectedProfile = profile
-                            if (isRunning) {
-                                startOrRestartVpn(profile)
-                            }
-                        }
+    val now = System.currentTimeMillis()
+    // Tolak tap ganda / ke-tap pas scroll, kalau di bawah 800ms abaikan
+    if (now - lastPresetClickMs < 800) return@clickable
+    // Kalau presetnya sama dan udah jalan, jangan restart lagi
+    if (profile.id == selectedProfile.id && isRunning) return@clickable
+    lastPresetClickMs = now
+    selectedProfile = profile
+    if (isRunning) {
+        startOrRestartVpn(profile)
+    }
+}
                         .padding(start = 14.dp, end = 6.dp, top = 11.dp, bottom = 11.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {

@@ -55,7 +55,11 @@ class ThrottleVpnService : VpnService() {
     private var wakeLock: PowerManager.WakeLock? = null
 
     @Volatile
-    private var isRunning = false
+private var isRunning = false
+
+// Anti preset gonta-ganti: tolak START duplikat yang sama dalam 1,5 detik
+private var lastPresetKey = ""
+private var lastPresetTime = 0L
 
     fun getLocalHotspotIp(): String {
         try {
@@ -197,6 +201,14 @@ class ThrottleVpnService : VpnService() {
                 val latencyMs = intent.getLongExtra(EXTRA_LATENCY_MS, 0L)
                 val hotspotMode = intent.getBooleanExtra(EXTRA_HOTSPOT_MODE, false)
                 val targetPkg = intent.getStringExtra(EXTRA_TARGET_PKG)
+                // Debounce preset - jangan restart kalau presetnya sama persis
+val presetKey = "$name|$sub|$downBps|$upBps|$latencyMs|$hotspotMode|$targetPkg"
+val nowMs = System.currentTimeMillis()
+if (presetKey == lastPresetKey && nowMs - lastPresetTime < 1500) {
+    return START_STICKY
+}
+lastPresetKey = presetKey
+lastPresetTime = nowMs
 
                 try {
                     ensureExecutor()
