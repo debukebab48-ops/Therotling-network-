@@ -59,7 +59,11 @@ class ThrottleVpnService : VpnService() {
     private val upBytesCounter = AtomicLong(0L)
     private var proxyServerSocket: ServerSocket? = null
     private val proxyClients = ConcurrentHashMap.newKeySet<Socket>()
+    private val proxyRemotes = ConcurrentHashMap.newKeySet<Socket>()
 
+    @Volatile
+    private var activeDownBps = 0L
+    
     @Volatile
     private var isHotspotProxyActive = false
     private var wakeLock: PowerManager.WakeLock? = null
@@ -223,11 +227,10 @@ class ThrottleVpnService : VpnService() {
         }
     }
 
-    // rateBps <= 0 = tanpa limit. Batasi burst maksimal 0.25 detik biar nggak jebol di awal.
+    // rateBps <= 0 = tanpa limit. Batasi burst rapat biar preset pelan nggak jebol di awal.
     private class TokenBucket(private val rateBps: Long) {
-        // RAPET: burst cuma 50ms, awal 0, biar gak ada gratis di awal
         private val maxBurst: Double = if (rateBps > 0) {
-            (rateBps * 0.02).coerceIn(512.0, 4096.0)
+            (rateBps * 0.02).coerceIn(64.0, 2048.0)
         } else {
             0.0
         }
@@ -235,8 +238,10 @@ class ThrottleVpnService : VpnService() {
         private var lastRefillNanos: Long = System.nanoTime()
         private val lock = Any()
 
+        fun isLimited(): Boolean = rateBps > 0
+
         fun consume(bytes: Int) {
-            if (rateBps <= 0 || bytes <= 0) return
+if (rateBps <= 0 || bytes <= 0) return
             var remaining = bytes.toDouble()
             while (remaining > 0) {
                 val waitMs: Long
@@ -363,10 +368,10 @@ class ThrottleVpnService : VpnService() {
         } catch (_: Exception) {
         }
 
+        activeDownBps = downBps
         downBytesCounter.set(0L)
         upBytesCounter.set(0L)
         acquireWakeLock()
-
         createNotificationChannel()
         startForeground(
             NOTIF_ID,
@@ -516,8 +521,11 @@ class ThrottleVpnService : VpnService() {
                 try {
                     protect(session.socket)
                     session.socket.tcpNoDelay = true
+                    if (activeDownBps > 0) {
+                        runCatching { session.socket.receiveBufferSize = 8192 }
+                    }
                     session.socket.connect(InetSocketAddress(InetAddress.getByAddress(dstIp), dstPort), 10000)
-                    session.connected = true
+session.connected = true
 
                     if (latencyMs > 0) Thread.sleep(latencyMs)
 
@@ -634,12 +642,13 @@ class ThrottleVpnService : VpnService() {
         downBucket: TokenBucket,
         latencyMs: Long,
     ) {
-        val readBuf = ByteArray(1360)
+        val maxRead = if (downBucket.isLimited()) 256 else 1360
+        val readBuf = ByteArray(maxRead)
         try {
             val inStream = session.socket.getInputStream()
             while (isRunning && !session.closed) {
-                val n = inStream.read(readBuf)
-                if (n == -1) {
+                val n = inStream.read(readBuf, 0, maxRead)
+if (n == -1) {
                     synchronized(session.seqLock) {
                         val finPkt = buildTcpPacket(
                             srcIp = session.serverIp,
@@ -705,6 +714,12 @@ class ThrottleVpnService : VpnService() {
             } catch (_: Exception) {}
         }
         proxyClients.clear()
+        proxyRemotes.toList().forEach {
+            try {
+                it.close()
+            } catch (_: Exception) {}
+        }
+        proxyRemotes.clear()
         closeAllSessions()
         try {
             vpnInterface?.close()
@@ -712,6 +727,7 @@ class ThrottleVpnService : VpnService() {
         }
         vpnInterface = null
 
+        activeDownBps = downBps
         downBytesCounter.set(0L)
         upBytesCounter.set(0L)
         acquireWakeLock()
@@ -720,9 +736,9 @@ class ThrottleVpnService : VpnService() {
         val activeIp = getLocalHotspotIp()
         startForeground(
             NOTIF_ID,
-            buildNotification(profileName, "Proxy $activeIp:$PROXY_PORT • ↓ 0.0 KB/s • ↑ 0.0 KB/s ($profileSub)", 0L),
+            buildNotification(profileName, "Proxy $activeIp:$PROXY_PORT • ↓ ${formatSpeed(0)} • ↑ ${formatSpeed(0)} ($profileSub)", 0L),
         )
-
+        
         isHotspotProxyActive = true
         isRunning = true
 
@@ -806,8 +822,14 @@ class ThrottleVpnService : VpnService() {
             } catch (_: Exception) {}
         }
         proxyClients.clear()
+        proxyRemotes.toList().forEach {
+            try {
+                it.close()
+            } catch (_: Exception) {}
+        }
+        proxyRemotes.clear()
     }
-
+    
     private fun handleProxyClient(
         client: Socket,
         upBucket: TokenBucket,
@@ -896,6 +918,7 @@ class ThrottleVpnService : VpnService() {
                     }
 
                     val remote = Socket()
+                    proxyRemotes.add(remote)
                     try {
                         try {
                             protect(remote)
@@ -906,6 +929,9 @@ class ThrottleVpnService : VpnService() {
                         try {
                             remote.tcpNoDelay = true
                         } catch (_: Exception) {}
+                        if (activeDownBps > 0) {
+                            runCatching { remote.receiveBufferSize = 8192 }
+                        }
                         remote.connect(InetSocketAddress(host, port), 10_000)
                         if (latencyMs > 0) Thread.sleep(latencyMs)
                         try {
@@ -922,11 +948,12 @@ class ThrottleVpnService : VpnService() {
                             out.flush()
                         } catch (_: Exception) {}
                     } finally {
+                        proxyRemotes.remove(remote)
                         try {
                             remote.close()
                         } catch (_: Exception) {}
                     }
-                } else {
+} else {
                     val uri: URI
                     try {
                         uri = URI(target)
@@ -960,6 +987,7 @@ class ThrottleVpnService : VpnService() {
                         return
                     }
                     val remote = Socket()
+                    proxyRemotes.add(remote)
                     try {
                         try {
                             protect(remote)
@@ -970,6 +998,9 @@ class ThrottleVpnService : VpnService() {
                         try {
                             remote.tcpNoDelay = true
                         } catch (_: Exception) {}
+                        if (activeDownBps > 0) {
+                            runCatching { remote.receiveBufferSize = 8192 }
+                        }
                         remote.connect(InetSocketAddress(host, port), 10_000)
                         if (latencyMs > 0) Thread.sleep(latencyMs)
                         val sb = StringBuilder("$method $path HTTP/1.1\r\n")
@@ -991,11 +1022,12 @@ class ThrottleVpnService : VpnService() {
                             out.flush()
                         } catch (_: Exception) {}
                     } finally {
+                        proxyRemotes.remove(remote)
                         try {
                             remote.close()
                         } catch (_: Exception) {}
                     }
-                }
+}
             }
         } catch (t: Throwable) {
             // Jaring pengaman terakhir: jangan pernah lempar ke Executor thread
@@ -1018,11 +1050,12 @@ class ThrottleVpnService : VpnService() {
         val remoteIn = remote.getInputStream()
         val remoteOut = remote.getOutputStream()
 
+        val maxUp = if (upBucket.isLimited()) 256 else 1024
         val upTask = globalExecutor.submit {
-            val buf = ByteArray(1024)
+            val buf = ByteArray(maxUp)
             try {
                 while (isRunning && isHotspotProxyActive) {
-                    val n = clientIn.read(buf)
+                    val n = clientIn.read(buf, 0, maxUp)
                     if (n <= 0) break
                     upBucket.consume(n)
                     if (latencyMs > 0) Thread.sleep(latencyMs)
@@ -1034,11 +1067,12 @@ class ThrottleVpnService : VpnService() {
             }
         }
 
-        val bufDown = ByteArray(1024)
+        val maxDown = if (downBucket.isLimited()) 256 else 1024
+        val bufDown = ByteArray(maxDown)
         try {
             while (isRunning && isHotspotProxyActive) {
-                val n = remoteIn.read(bufDown)
-                if (n <= 0) break
+                val n = remoteIn.read(bufDown, 0, maxDown)
+if (n <= 0) break
                 downBucket.consume(n)
                 if (latencyMs > 0) Thread.sleep(latencyMs)
                 downBytesCounter.addAndGet(n.toLong())
@@ -1187,11 +1221,12 @@ class ThrottleVpnService : VpnService() {
         buf.putShort(dstPort.toShort())
         buf.putInt(seq.toInt())
         buf.putInt(ack.toInt())
+        val advertisedWindow = if (activeDownBps > 0) 4096 else 65535
         buf.put(((tcpHeaderLen / 4) shl 4).toByte())
         buf.put(flags.toByte())
-        buf.putShort(65535.toShort())
+        buf.putShort(advertisedWindow.toShort())
         buf.putShort(0)
-        buf.putShort(0)
+buf.putShort(0)
         if (includeMss) {
             buf.put(2.toByte())
             buf.put(4.toByte())
@@ -1311,8 +1346,9 @@ class ThrottleVpnService : VpnService() {
 
     private fun stopVpn() {
         isRunning = false
+        activeDownBps = 0L
         stopHotspotProxyInternal()
-        releaseWakeLock()
+                releaseWakeLock()
         closeAllSessions()
         try {
             vpnInterface?.close()
