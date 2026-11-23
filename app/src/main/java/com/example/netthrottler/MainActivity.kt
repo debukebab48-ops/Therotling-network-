@@ -702,3 +702,4 @@ fun ThrottlerScreen() {
             },
         )
     }
+}
