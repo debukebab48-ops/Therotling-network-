@@ -17,7 +17,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Image
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
-import android.graphics.drawable.BitmapDrawable
+import androidx.core.graphics.drawable.toBitmap
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -623,8 +623,8 @@ fun ThrottlerScreen() {
                                  .padding(horizontal = 12.dp, vertical = 10.dp),
                              verticalAlignment = Alignment.CenterVertically,
                          ) {
-                             val bitmap = (icon as? android.graphics.drawable.BitmapDrawable)?.bitmap?.asImageBitmap()
-                             if (bitmap != null) {
+                             val bitmap = icon.toBitmap().asImageBitmap()
+                                                          if (bitmap != null) {
                                  androidx.compose.foundation.Image(
                                      bitmap = bitmap,
                                      contentDescription = null,
@@ -657,12 +657,4 @@ fun ThrottlerScreen() {
          },
      )
  }
-            },
-            confirmButton = {
-                TextButton(onClick = { showAppPicker = false }) {
-                    Text("Batal", color = ClassicTextSecondary)
-                }
-            },
-        )
-    }
 }
