@@ -34,9 +34,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.toBitmap
-
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 private val ClassicBlack = Color(0xFF000000)
 private val ClassicSurface = Color(0xFF0D0D0D)
 private val ClassicSurfaceActive = Color(0xFF171C26)
@@ -546,32 +548,43 @@ fun ThrottlerScreen() {
         )
     }
 
-// Dialog App Picker + Pencarian
+    // Dialog App Picker + Pencarian
     if (showAppPicker) {
         val pm = context.packageManager
-        val apps = remember {
-            pm.getInstalledApplications(0)
-                .filter { it.packageName != context.packageName } // Hapus filter sistem agar app bawaan/pre-installed ikut muncul
-                .map { appInfo ->
-                    Triple(
-                        appInfo.packageName,
-                        pm.getApplicationLabel(appInfo).toString(),
-                        appInfo.loadIcon(pm),
-                    )
-                }
-                .sortedBy { it.second.lowercase() }
+        var apps by remember { mutableStateOf<List<Triple<String, String, ImageBitmap?>>>(emptyList()) }
+        var isLoadingApps by remember { mutableStateOf(true) }
+
+        LaunchedEffect(Unit) {
+            apps = withContext(Dispatchers.IO) {
+                pm.getInstalledApplications(0)
+                    .filter {
+                        it.packageName != context.packageName &&
+                            pm.getLaunchIntentForPackage(it.packageName) != null
+                    }
+                    .map { appInfo ->
+                        val label = pm.getApplicationLabel(appInfo).toString()
+                        val iconBitmap = runCatching {
+                            appInfo.loadIcon(pm).toBitmap(72, 72).asImageBitmap()
+                        }.getOrNull()
+                        Triple(appInfo.packageName, label, iconBitmap)
+                    }
+                    .sortedBy { it.second.lowercase() }
+            }
+            isLoadingApps = false
         }
+
         var searchQuery by remember { mutableStateOf("") }
         val filteredApps = remember(searchQuery, apps) {
             if (searchQuery.isBlank()) {
                 apps
             } else {
                 val q = searchQuery.trim().lowercase()
-                apps.filter { (pkg, name, _) ->
+                apps.filter { (_, name, _) ->
                     name.lowercase().contains(q)
                 }
             }
         }
+
         AlertDialog(
             onDismissRequest = { showAppPicker = false },
             containerColor = ClassicSurface,
@@ -581,7 +594,13 @@ fun ThrottlerScreen() {
                     OutlinedTextField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
-                        placeholder = { Text("Ketik nama aplikasi (cth: TikTok Lite)...", fontSize = 13.sp, color = ClassicTextSecondary) },
+                        placeholder = {
+                            Text(
+                                "Ketik nama aplikasi (cth: TikTok Lite)...",
+                                fontSize = 13.sp,
+                                color = ClassicTextSecondary,
+                            )
+                        },
                         leadingIcon = {
                             Icon(
                                 imageVector = Icons.Default.Search,
@@ -603,46 +622,73 @@ fun ThrottlerScreen() {
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    LazyColumn(
-                        modifier = Modifier.height(320.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        items(filteredApps) { (pkg, name, icon) ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .border(1.dp, ClassicBorder, RoundedCornerShape(4.dp))
-                                    .clickable {
-                                        isGlobalMode = false
-                                        selectedAppPkg = pkg
-                                        selectedAppName = name
-                                        showAppPicker = false
-                                        if (isRunning) startOrRestartVpn()
+                    if (isLoadingApps) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(320.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                CircularProgressIndicator(color = ClassicAccent)
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Text(
+                                    text = "Memuat daftar aplikasi...",
+                                    fontSize = 12.sp,
+                                    color = ClassicTextSecondary,
+                                )
+                            }
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.height(320.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            items(filteredApps, key = { it.first }) { (pkg, name, bitmap) ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .border(1.dp, ClassicBorder, RoundedCornerShape(4.dp))
+                                        .clickable {
+                                            isGlobalMode = false
+                                            selectedAppPkg = pkg
+                                            selectedAppName = name
+                                            showAppPicker = false
+                                            if (isRunning) startOrRestartVpn()
+                                        }
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    if (bitmap != null) {
+                                        Image(
+                                            bitmap = bitmap,
+                                            contentDescription = null,
+                                            modifier = Modifier
+                                                .size(28.dp)
+                                                .clip(RoundedCornerShape(6.dp)),
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Default.Apps,
+                                            contentDescription = null,
+                                            tint = ClassicTextSecondary,
+                                            modifier = Modifier.size(28.dp),
+                                        )
                                     }
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                val bitmap = icon.toBitmap().asImageBitmap()
-                                if (bitmap != null) {
-                                    androidx.compose.foundation.Image(
-                                        bitmap = bitmap,
-                                        contentDescription = null,
-                                        modifier = Modifier
-                                            .size(28.dp)
-                                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp)),
-                                    )
-                                } else {
-                                    Icon(
-                                        imageVector = Icons.Default.Apps,
-                                        contentDescription = null,
-                                        tint = ClassicTextSecondary,
-                                        modifier = Modifier.size(28.dp),
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(text = name, color = ClassicTextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                                    Text(text = pkg, color = ClassicTextSecondary, fontSize = 11.sp)
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = name,
+                                            color = ClassicTextPrimary,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Medium,
+                                        )
+                                        Text(
+                                            text = pkg,
+                                            color = ClassicTextSecondary,
+                                            fontSize = 11.sp,
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -656,4 +702,4 @@ fun ThrottlerScreen() {
             },
         )
     }
-}
+
