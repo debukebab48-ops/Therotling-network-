@@ -4,7 +4,6 @@ import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.ApplicationInfo
-import android.graphics.drawable.BitmapDrawable
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
@@ -12,10 +11,13 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import android.graphics.drawable.BitmapDrawable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -27,9 +29,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -547,94 +547,116 @@ fun ThrottlerScreen() {
         )
     }
 
-    // Dialog App Picker + Pencarian
-    if (showAppPicker) {
-        val pm = context.packageManager
-        val apps = remember {
-            pm.getInstalledApplications(0)
-                .filter { (it.flags and ApplicationInfo.FLAG_SYSTEM) == 0 && it.packageName != context.packageName }
-                .map { it.packageName to pm.getApplicationLabel(it).toString() }
-                .sortedBy { it.second.lowercase() }
-        }
-        var searchQuery by remember { mutableStateOf("") }
-        val filteredApps = remember(searchQuery, apps) {
-            if (searchQuery.isBlank()) {
-                apps
-            } else {
-                val q = searchQuery.trim().lowercase()
-                // Hanya cari berdasarkan nama aplikasi, abaikan package name
-                apps.filter { (pkg, name) ->
-                    name.lowercase().contains(q)
-                }
-            }
-        }
-
-        AlertDialog(
-            onDismissRequest = { showAppPicker = false },
-            containerColor = ClassicSurface,
-            title = { Text("Pilih Aplikasi Target", color = ClassicTextPrimary) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { searchQuery = it },
-                        placeholder = { Text("Ketik nama aplikasi (cth: TikTok Lite)...", fontSize = 13.sp, color = ClassicTextSecondary) },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.Default.Search,
-                                contentDescription = "Cari",
-                                tint = ClassicAccent,
-                            )
-                        },
-                        trailingIcon = {
-                            if (searchQuery.isNotEmpty()) {
-                                IconButton(onClick = { searchQuery = "" }) {
-                                    Icon(
-                                        imageVector = Icons.Default.Close,
-                                        contentDescription = "Hapus",
-                                        tint = ClassicTextSecondary,
-                                    )
-                                }
-                            }
-                        },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-
-                    LazyColumn(
-                        modifier = Modifier.height(320.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        items(filteredApps) { (pkg, name) ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .border(1.dp, ClassicBorder, RoundedCornerShape(4.dp))
-                                    .clickable {
-                                        isGlobalMode = false
-                                        selectedAppPkg = pkg
-                                        selectedAppName = name
-                                        showAppPicker = false
-                                        if (isRunning) startOrRestartVpn()
-                                    }
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                val bitmap = (icon as? BitmapDrawable)?.bitmap?.asImageBitmap()
-                                if (bitmap != null) {
-                                    Image(bitmap = bitmap, contentDescription = null, modifier = Modifier.size(28.dp).clip(RoundedCornerShape(6.dp)))
-                                } else {
-                                    Icon(imageVector = Icons.Default.Apps, contentDescription = null, tint = ClassicTextSecondary, modifier = Modifier.size(28.dp))
-                                }
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(text = name, color = ClassicTextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                                    Text(text = pkg, color = ClassicTextSecondary, fontSize = 11.sp)
-                                }
-                            }
-                        }
-                    }
-                }
+// Dialog App Picker + Pencarian
+ if (showAppPicker) {
+     val pm = context.packageManager
+     val apps = remember {
+         pm.getInstalledApplications(0)
+             .filter { (it.flags and ApplicationInfo.FLAG_SYSTEM) == 0 && it.packageName != context.packageName }
+             .map { appInfo ->
+                 Triple(
+                     appInfo.packageName,
+                     pm.getApplicationLabel(appInfo).toString(),
+                     appInfo.loadIcon(pm)
+                 )
+             }
+             .sortedBy { it.second.lowercase() }
+     }
+     var searchQuery by remember { mutableStateOf("") }
+     val filteredApps = remember(searchQuery, apps) {
+         if (searchQuery.isBlank()) {
+             apps
+         } else {
+             val q = searchQuery.trim().lowercase()
+             apps.filter { (pkg, name, _) ->
+                 name.lowercase().contains(q)
+             }
+         }
+     }
+     AlertDialog(
+         onDismissRequest = { showAppPicker = false },
+         containerColor = ClassicSurface,
+         title = { Text("Pilih Aplikasi Target", color = ClassicTextPrimary) },
+         text = {
+             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                 OutlinedTextField(
+                     value = searchQuery,
+                     onValueChange = { searchQuery = it },
+                     placeholder = { Text("Ketik nama aplikasi (cth: TikTok Lite)...", fontSize = 13.sp, color = ClassicTextSecondary) },
+                     leadingIcon = {
+                         Icon(
+                             imageVector = Icons.Default.Search,
+                             contentDescription = "Cari",
+                             tint = ClassicAccent,
+                         )
+                     },
+                     trailingIcon = {
+                         if (searchQuery.isNotEmpty()) {
+                             IconButton(onClick = { searchQuery = "" }) {
+                                 Icon(
+                                     imageVector = Icons.Default.Close,
+                                     contentDescription = "Hapus",
+                                     tint = ClassicTextSecondary,
+                                 )
+                             }
+                         }
+                     },
+                     singleLine = true,
+                     modifier = Modifier.fillMaxWidth(),
+                 )
+                 LazyColumn(
+                     modifier = Modifier.height(320.dp),
+                     verticalArrangement = Arrangement.spacedBy(4.dp),
+                 ) {
+                     items(filteredApps) { (pkg, name, icon) ->
+                         Row(
+                             modifier = Modifier
+                                 .fillMaxWidth()
+                                 .border(1.dp, ClassicBorder, RoundedCornerShape(4.dp))
+                                 .clickable {
+                                     isGlobalMode = false
+                                     selectedAppPkg = pkg
+                                     selectedAppName = name
+                                     showAppPicker = false
+                                     if (isRunning) startOrRestartVpn()
+                                 }
+                                 .padding(horizontal = 12.dp, vertical = 10.dp),
+                             verticalAlignment = Alignment.CenterVertically,
+                         ) {
+                             val bitmap = (icon as? android.graphics.drawable.BitmapDrawable)?.bitmap?.asImageBitmap()
+                             if (bitmap != null) {
+                                 androidx.compose.foundation.Image(
+                                     bitmap = bitmap,
+                                     contentDescription = null,
+                                     modifier = Modifier
+                                         .size(28.dp)
+                                         .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+                                 )
+                             } else {
+                                 Icon(
+                                     imageVector = Icons.Default.Apps,
+                                     contentDescription = null,
+                                     tint = ClassicTextSecondary,
+                                     modifier = Modifier.size(28.dp)
+                                 )
+                             }
+                             Spacer(modifier = Modifier.width(12.dp))
+                             Column(modifier = Modifier.weight(1f)) {
+                                 Text(text = name, color = ClassicTextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                 Text(text = pkg, color = ClassicTextSecondary, fontSize = 11.sp)
+                             }
+                         }
+                     }
+                 }
+             }
+         },
+         confirmButton = {
+             TextButton(onClick = { showAppPicker = false }) {
+                 Text("Batal", color = ClassicTextSecondary)
+             }
+         },
+     )
+ }
             },
             confirmButton = {
                 TextButton(onClick = { showAppPicker = false }) {
